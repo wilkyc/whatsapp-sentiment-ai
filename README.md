@@ -8,7 +8,7 @@
 
 ## 📌 Executive Summary
 
-This repository demonstrates the end-to-end implementation of **Generative AI (Gemini 3.7 Flash)** and **Google Cloud Platform (GCP)** architecture in real-world business operations. The solution consists of two complementary systems:
+This repository demonstrates the end-to-end implementation of **Generative AI (Gemini 3.8 Flash)** and **Google Cloud Platform (GCP)** architecture in real-world business operations. The solution consists of two complementary systems:
 
 1. **🤖 Multi-Modal WhatsApp AI Operations Assistant (Real-Time)**: An on-demand conversational agent deployed on GCP. Non-technical staff can query databases via natural language, extract data from documents/images, and dispatch CSV/email reports directly within WhatsApp.
 2. **📊 Marketing Intelligence & Risk Profiling Pipeline (Automated Batch)**: An autonomous data pipeline running scheduled jobs to clean chat logs, profile community users, analyze brand sentiment, and trigger instant crisis alerts for customer service teams.
