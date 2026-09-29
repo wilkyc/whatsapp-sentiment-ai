@@ -1,34 +1,78 @@
 # ==========================================
-# ⚙️ Global Configuration File (config.py)
+# ⚙️ 全局系統設定檔 (config.py)
+# ------------------------------------------
+# All environment-specific values (sheet URLs, DB hosts, credentials) are
+# read from environment variables. No real defaults are committed.
+# See .env.example for the full list of variables.
 # ==========================================
+import os
 
-# 🍼 Core Milk Powder Brands (Used by main.py, risk_analysis.py, dashboard.py)
+
+def _env(name, default=""):
+    return os.environ.get(name, default).strip()
+
+
+def _env_int(name, default):
+    val = _env(name)
+    return int(val) if val else default
+
+
+# 🍼 18 個核心標準奶粉品牌
 MILK_POWDER_BRANDS = [
-    "雅培心美力", "Apta Platinum", "Apta Essensis", "Apta Neo", "牛欄牌", 
-    "美素", "美素金裝", "美素皇家", "美素有機", "美素Kids", "美素Signature", 
-    "Hipp", "Illuma", "Illuma 有機", "美贊臣 A+", "美贊臣 Enfinitas", 
+    "雅培心美力", "Apta Platinum", "Apta Essensis", "Apta Neo", "牛欄牌",
+    "美素", "美素金裝", "美素皇家", "美素有機", "美素Kids", "美素Signature",
+    "Hipp", "Illuma", "Illuma 有機", "美贊臣 A+", "美贊臣 Enfinitas",
     "雀巢能恩", "雀巢全護"
 ]
 
-# 💼 Business / Promotional Keywords (Used by risk_analysis.py)
-BUSINESS_KEYWORDS = [
-    '私訊', '代購', '團購', '報價', '優惠碼', '加我', '拼單', 'pm', 'inbox', 
-    '了解詳情', '留名', '代理', '批發', '招商', '兼職', '賺錢', '有興趣pm', 
-    '清貨', '全新未開', '轉讓', '平放'
-]
+# 📝 31 個全量欄位標準格式 (reply 移至 messageBody 後、brand 前)
+FINAL_HEADERS_31 = (
+    ["Group", "GroupID", "Date", "Time", "userPhone", "Internal",
+     "quotedMessage", "messageBody", "reply", "brand", "keywords", "warning"]
+    + MILK_POWDER_BRANDS
+    + ["Other_Brands"]
+)
 
-# 🏥 Cross-industry Brands / Services Keywords (Used by risk_analysis.py)
-OTHER_BRANDS_KEYWORDS = [
-    '幫寶適', 'Pampers', '滿意寶寶', 'Moony', '妙而舒', 'Merries', '大王', 'GOO.N', 'Huggies', '好奇',
-    '宏利', 'Manulife', '保誠', 'Prudential', '友邦', 'AIA', '安盛', 'AXA', '儲蓄保', '基金', '理財', '醫療保',
-    '扎肚', '陪月', '百日宴', '攝影', '滴雞精', '衍生', '益生菌', '孕婦維他命', '催乳', '通乳'
-]
+# 🌐 Google Sheets 相關設定 (URLs supplied via env / GitHub Secrets)
+KEYWORDS_SHEET_URL = _env("KEYWORDS_SHEET_URL")
+BRAND_SHEET_NAME = "brand_keywords"
+IFT_SHEET_NAME = "ift_keywords"
 
-# 🎯 Sim Master Configuration
-SIM_MASTER_URL = "YOUR_SIM_MASTER_SHEET_URL" # Sanitized for portfolio
-SIM_MASTER_TAB_NAME = "Test"
+GROUPINFO_SHEET_URL = _env("GROUPINFO_SHEET_URL")
+MASTER_WORKSHEET_NAME = "Sheet1"
 
-# 📊 Dashboard Specific Configuration
+# 🧪 測試表格覆蓋設定
+# Set TEST_TARGET_SHEET_URL to write all output into a single test sheet.
+# Leave empty for production mode (writes to yymm_DailyData_PartN sheets).
+TEST_TARGET_SHEET_URL = _env("TEST_TARGET_SHEET_URL")
+TEST_WORKSHEET_TAB = "Sheet1"
+
+# 👥 內部號碼清單 (never committed)
+# Either INTERNAL_PHONES_JSON (JSON string, e.g. a GitHub Secret) or a local
+# gitignored file at INTERNAL_PHONES_FILE. See internal_phones.example.json.
+INTERNAL_PHONES_JSON = _env("INTERNAL_PHONES_JSON")
+INTERNAL_PHONES_FILE = _env("INTERNAL_PHONES_FILE", "internal_phones.json")
+
+# 🐘 1. 原讀取對話資料庫 (PostgreSQL, WhatsApp message store)
+DB_CONFIG = {
+    "host": _env("DB_HOST"),
+    "port": _env_int("DB_PORT", 5432),
+    "database": _env("DB_NAME"),
+    "user": _env("DB_USER"),
+    "password": _env("DB_PASSWORD"),
+}
+
+# ⚡ 2. Supabase 全量寫入資料庫配置 (Session Mode - IPv4 Pooler)
+SUPABASE_DB_CONFIG = {
+    "host": _env("SUPABASE_DB_HOST"),
+    "port": _env_int("SUPABASE_DB_PORT", 5432),
+    "database": _env("SUPABASE_DB_NAME", "postgres"),
+    "user": _env("SUPABASE_DB_USER"),
+    "password": _env("SUPABASE_DB_PASSWORD"),
+}
+SUPABASE_FULL_TABLE = "message_full"
+
+# 📊 Dashboard 設定 (used by dashboard.py)
 BRAND_MAPPING = {
     "Abbott": ["雅培心美力"],
     "Apta": ["Apta Platinum", "Apta Essensis", "Apta Neo"],
@@ -38,6 +82,5 @@ BRAND_MAPPING = {
     "Nestle": ["雀巢能恩", "雀巢全護"],
     "Wyeth / illuma": ["Illuma", "Illuma 有機"]
 }
-
 FRISO_SUB_BRANDS = ["美素金裝", "美素皇家", "美素有機", "美素Kids", "美素Signature"]
 FRISO_MAIN = "美素"
