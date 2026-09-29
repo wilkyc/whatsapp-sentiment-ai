@@ -1,17 +1,31 @@
-# Environments
-.env
-.venv
-env/
-venv/
-ENV/
-
-# Credentials & API Keys
+# Google 憑證與環境變數 (絕對禁止上傳)
 service_account.json
 credentials.json
+*.json
 *.pem
+.env
+.env.*
+!.env.example
+!*.example.json
 
-# Python
+# 內部號碼清單 (本地使用，絕對禁止上傳)
+internal_phones.json
+
+# Python 快取與虛擬環境
 __pycache__/
 *.py[cod]
 *$py.class
+venv/
+env/
+ENV/
+.venv/
+
+# 開發工具
+.vscode/
+.idea/
+*.log
+
+# 臨時數據檔案
 temp_raw_data/
+*.csv
+*.xlsx

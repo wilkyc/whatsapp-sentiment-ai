@@ -1,6 +1,6 @@
 # 🚀 AI 數智營運與市場情報自動化系統 (AI-Driven Operations Suite)
 
-> **雙軌企業級 AI 營運賦能專案**：結合即時生成式 AI 助理與自動化數據管線，旨在消除重複性人工日常作業、實現對話式數據提取，並主動監控社群品牌輿情與帳號風險。
+> **雙軌企業級 AI 營運賦能專案**：結合即時生成式 AI 助理與自動化數據管線，旨在消除重複性人工日常作業、實現對話式數據提取，並將社群對話轉化為結構化的品牌輿情數據。
 
 [English](README.md) | **繁體中文**
 
@@ -11,7 +11,7 @@
 本專案展示了如何將 **生成式 AI（Gemini 3.8 Flash）** 與 **Google Cloud Platform (GCP) 雲端架構** 實際落地於日常商業營運。全套解決方案包含兩大互補的核心系統：
 
 1. **🤖 WhatsApp 多模態 AI 營運小幫手（即時互動）**：部署於 GCP 雲端的智慧營運助理。團隊非技術同仁只需透過日常 WhatsApp 對話，即可直接以自然語言查詢資料庫、解析多格式文件與圖片，並一鍵產出實體報表或寄送 Email。
-2. **📊 社群輿情分析與用戶風控數據管線（定時批次處理）**：全自動化數據處理流程，每日定時清洗社群日誌、對用戶進行 30 天行為風控評級、追蹤品牌情緒，並在發現公關危機時主動向管理與客服團隊發出警報。
+2. **📊 WhatsApp 社群輿情與 NLP 數據管線（定時批次處理）**：以 GitHub Actions 驅動的數據管線，每日抽取前一日 WhatsApp 群組訊息，完成去重與關鍵詞篩選後，交由具上下文理解的 LLM 進行品牌情緒分類，並將 31 欄標準化數據雙軌寫入 Google Sheets 與 Supabase，供儀表板及負面輿情警報使用。
 
 ---
 
@@ -47,16 +47,65 @@
 
 ---
 
-## 📊 系統二：自動化社群輿情與風險帳號畫像分析管線
+## 📊 系統二：WhatsApp 社群輿情與 NLP 數據管線
 
-### 🏗️ 數據管線架構圖 (Pipeline Architecture)
-![系統二架構圖](assets/pipeline-system2-zh.png)
+每日批次任務，將母嬰社群 WhatsApp 原始對話轉化為品牌層級的情緒數據（追蹤 18 個奶粉品牌／子品牌 + 其他品牌），直接供 BI 儀表板與客服／公關警報使用。
+
+### 🏗️ 數據管線流程 (Pipeline Flow)
+
+```mermaid
+flowchart LR
+    T["GitHub Actions<br/>workflow_dispatch / repository_dispatch"] --> C["讀取 Google Sheets 規則<br/>brand_keywords · ift_keywords · 群組資訊"]
+    C --> E["抽取訊息<br/>PostgreSQL（WhatsApp 資料庫）"]
+    E --> D["清洗與去重<br/>號碼標準化 · 內部帳號標記"]
+    D --> K["關鍵詞層<br/>最長匹配 + 排除詞遮罩"]
+    K -->|僅品牌 / 配方賣點命中| L["LLM 語義分類<br/>Poe API · gemini-3.1-flash-lite<br/>+ 同群前 5 則上下文"]
+    L --> W1["Google Sheets<br/>yymm_DailyData_Part1/2"]
+    L --> W2["Supabase<br/>message_full"]
+    W1 --> O["儀表板與郵件警報"]
+```
 
 ### 🌟 核心功能亮點
 
-* **🧠 智能情緒辨識與公關危機預警：** 自動分類顧客反饋，鎖定負面情緒客訴，即時提取群組、發送時間、發言者電話與引用內容，向客服團隊寄送緊急告警。
-* **🛡️ 30 天用戶行為軌跡與風險畫像：** 回溯 30 天跨群發言頻率，自動評分並標記帳號類型（*真實用戶 Real*、*觀察名單 Watch*、*商業廣告號 Business*、*競品暗樁號 Seeder*）。
-* **📈 全自動零手動維護看板：** 每日自動匯總各群熱度與情緒佔比，透過 API 自動更新 Google 試算表儀表板。
+* **⚙️ 業務團隊可自行維護規則：** 品牌關鍵詞（`CONTAINS` / `COMBO` / `REGEX` 三種匹配方式）、話題關鍵詞與排除詞均存放於 Google Sheets，行銷同事無需改程式即可調整識別邏輯。
+* **🧹 智能去重：** 同一群組內 60 秒內內容相同的訊息自動合併（如 WhatsApp 虛擬 ID 與真實號碼重複入庫），保留品質最佳的號碼格式，並依私有名單標記內部／員工帳號。
+* **💰 AI 成本控制：** 以最長匹配關鍵詞層（含排除詞遮罩）預先篩選，只有提及品牌或配方賣點的訊息才送入 LLM，並以 10 條執行緒並行處理。
+* **🧠 上下文情緒判斷：** 每則候選訊息連同引用訊息及同群組前 5 則發言一併分析，LLM 以結構化 JSON 回傳：是否 Spam、各品牌立場（`P` 正面 · `I` 中立／詢問 · `N` 負面）及所回覆的前文原句。
+* **🛡️ 防 AI 腦補機制：** 透過提示詞規則與 Few-shot 範例，禁止模型憑通用成分（如 DHA、水解）猜測品牌、誤判教育用語「A+」，或將代名詞關聯到前文從未出現的品牌；轉讓、代儲分、促銷轉發等訊息自動判為 Spam。
+* **🔗 回覆溯源 (reply)：** 當訊息是回應前文時，Python 會把模型輸出的 `reply_origin` 與上下文逐句比對，還原完整原句（保留 Emoji），寫入 `reply` 欄位。
+* **🏷️ 品牌歸併與警示：** 子品牌情緒依 N > P > I 優先順序歸併至主品牌，核心品牌出現負面評價時於 `warning` 欄標記，方便客服／公關跟進。
+* **🚦 熔斷保護：** 批次開始前先檢測 AI 服務狀態，運行中連續 5 次 LLM 失敗（如 API 額度耗盡）即中止任務，避免寫入半成品數據。
+* **💾 雙軌寫入：** 固定 31 欄格式，按半月分表寫入 Google Sheets（`yymm_DailyData_Part1` = 1–15 日，`Part2` = 16 日至月底），內建公式注入防護與 429 限流指數退避重試；同時批次寫入 Supabase `message_full` 表。另設測試表模式，避免污染正式數據。
+* **🔁 一鍵重跑：** 預設處理香港時間昨日數據；於 Workflow 表單輸入 `target_date`（`yymmdd`）即可重跑指定日期。
+
+### 🧰 配套腳本
+
+* `dashboard.py`：將單日 DailyData 匯總至每月 Google Sheets 儀表板（觸及量、群組分類、品牌情緒統計），需另行以 `--dashboard_id` 執行。
+* `scripts/email_automation/` 與 `docs/MANUS_EMAIL_AUTOMATION.md`：由 Manus AI 排程執行的每日摘要郵件與負面輿情警報。
+
+### 🚀 安裝與設定 (Setup)
+
+1. `pip install -r requirements.txt`（Python 3.11）
+2. 本地執行時，複製 `.env.example` 為 `.env` 並填入數值，將 Google 服務帳戶金鑰存為 `service_account.json`，並把關鍵詞表、群組資訊表及 DailyData 表共用給該服務帳戶。
+3. 選用：複製 `internal_phones.example.json` 為 `internal_phones.json`（已 gitignore）以標記內部帳號。
+4. 執行 `python main.py`（設定 `MANUAL_DATE=yymmdd` 可處理指定日期）。
+
+**GitHub Actions Secrets**（Workflow：`.github/workflows/daily_whatsapp_nlp.yml`）：
+
+| Secret | 必填 | 用途 |
+| :--- | :--- | :--- |
+| `GCP_SA_KEY` | ✅ | Google 服務帳戶 JSON |
+| `POE_API_KEY` | ✅ | Poe API 金鑰（LLM） |
+| `DB_HOST`、`DB_NAME`、`DB_USER`、`DB_PASSWORD` | ✅ | 來源 PostgreSQL（WhatsApp 訊息庫） |
+| `DB_PORT` | 選填 | 預設 `5432` |
+| `KEYWORDS_SHEET_URL` | ✅ | 含 `brand_keywords` / `ift_keywords` 分頁的試算表 |
+| `GROUPINFO_SHEET_URL` | ✅ | 含 `groups` 分頁的試算表（群組 ID → 名稱） |
+| `SUPABASE_DB_HOST`、`SUPABASE_DB_USER`、`SUPABASE_DB_PASSWORD` | 寫入 Supabase 時 | Supabase Session Pooler；host 或密碼為空時自動略過 |
+| `SUPABASE_DB_PORT`、`SUPABASE_DB_NAME` | 選填 | 預設 `5432` / `postgres` |
+| `TEST_TARGET_SHEET_URL` | 選填 | 設定後所有輸出只寫入此測試表 |
+| `INTERNAL_PHONES_JSON` | 選填 | 格式如 `{"LabelA": ["9xxxxxxx"], "LabelB": [...]}`，用於 `Internal` 欄位 |
+
+觸發方式：**Actions → Daily WhatsApp Data NLP Pipeline → Run workflow**（可選填 `target_date`），或由外部排程發送 `trigger-nlp-pipeline` 類型的 `repository_dispatch` 事件。
 
 ---
 
@@ -67,20 +116,20 @@
 | **每日數據整理耗時** | 每日需花費 2 ～ 3 小時 | 縮短至約 15 分鐘 | **節省超過 80% 人工作業時間** |
 | **業務數據獲取門檻** | 需向技術人員提需求等待匯出 | 隨時在 WhatsApp 提問即得 | **跨團隊溝通成本歸零**，決策更即時 |
 | **公關客訴反應速度** | 被動發現或於數日後人工覆盤 | 每日主動掃描並寄出危機警報 | 搶先於第一時間**主動介入處理客訴** |
-| **社群健康度維護** | 難以人工識別競品暗樁與洗版號 | 自動化 30 天行為評分標記 | 有效淨化社群品質，**維護真實用戶體驗** |
 
 ---
 
 ## 🛠️ 技術與工具應用 (Tech Stack)
 
-* **AI 與多模態模型：** Google Vertex AI (Gemini Flash)、MarkItDown、Python-docx 文件多模態解析、提示詞工程 (Prompt Engineering)
+* **AI 與多模態模型：** Google Vertex AI (Gemini Flash)、Poe API（OpenAI 相容介面，`gemini-3.1-flash-lite`）、MarkItDown、Python-docx 文件多模態解析、提示詞工程 (Prompt Engineering)
 * **雲端與無伺服器架構：** Google Cloud Platform (Cloud Functions、Cloud Run、Cloud Pub/Sub 事件驅動、Secret Manager 密鑰管理、Cloud Firestore 狀態儲存)
-* **資料庫與數據處理：** PostgreSQL、SQLAlchemy（連線池管理）、Pandas、正則表達式
+* **資料庫與數據處理：** PostgreSQL、Supabase、psycopg2、SQLAlchemy（連線池管理）、Pandas、正則表達式
 * **自動化流程與 API 串接：** Evolution API (WhatsApp 通道)、Google Workspace APIs (Sheets & Drive)、Gmail SMTP 郵件引擎、GitHub Actions 定時排程
 
 ---
 
 ## 🔒 數據隱私與安全性聲明 (Security & Privacy)
 
-* **資安防護：** 所有資料庫連線字串、API Key 與服務憑證均採用雲端加密儲存（Secret Manager 及環境變數），絕不上傳至公開儲存庫。
+* **資安防護：** 所有資料庫主機、試算表網址、API Key 與服務憑證均透過環境變數提供（Secret Manager / GitHub Secrets），程式碼不含任何真實預設值（見 `.env.example`）。
+* **私有名單不入庫：** 內部帳號號碼清單於執行時由 Secret 或已 gitignore 的本地檔案載入，絕不提交至儲存庫。
 * **去識別化展示：** 本專案展示之對話紀錄、資料庫欄位及演示數據均已進行嚴格的脫敏（De-identification）與模擬數據替換，無任何真實客戶隱私資料外洩。

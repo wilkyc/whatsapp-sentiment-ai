@@ -1,6 +1,6 @@
 # 🚀 AI-Driven Business Operations & Marketing Intelligence Suite
 
-> **An enterprise AI operations portfolio** integrating real-time Generative AI assistants with automated data pipelines. Built to eliminate manual daily workflows, unlock conversational data insights, and proactively detect brand sentiment and community risks.
+> **An enterprise AI operations portfolio** integrating real-time Generative AI assistants with automated data pipelines. Built to eliminate manual daily workflows, unlock conversational data insights, and turn community chat into structured brand-sentiment data.
 
 **English** | [繁體中文](README_zh.md)
 
@@ -11,7 +11,7 @@
 This repository demonstrates the end-to-end implementation of **Generative AI (Gemini 3.8 Flash)** and **Google Cloud Platform (GCP)** architecture in real-world business operations. The solution consists of two complementary systems:
 
 1. **🤖 Multi-Modal WhatsApp AI Operations Assistant (Real-Time)**: An on-demand conversational agent deployed on GCP. Non-technical staff can query databases via natural language, extract data from documents/images, and dispatch CSV/email reports directly within WhatsApp.
-2. **📊 Marketing Intelligence & Risk Profiling Pipeline (Automated Batch)**: An autonomous data pipeline running scheduled jobs to clean chat logs, profile community users, analyze brand sentiment, and trigger instant crisis alerts for customer service teams.
+2. **📊 WhatsApp Community Sentiment & NLP Pipeline (Automated Batch)**: A GitHub Actions data pipeline that pulls the previous day's WhatsApp group messages, de-duplicates and keyword-filters them, runs context-aware LLM brand-sentiment classification, and dual-writes a 31-column dataset to Google Sheets and Supabase for dashboards and negative-sentiment alerts.
 
 ---
 
@@ -47,16 +47,65 @@ The system has undergone end-to-end verification across operational workflows:
 
 ---
 
-## 📊 System 2: Automated Sentiment & Community Risk Profiling Pipeline
+## 📊 System 2: WhatsApp Community Sentiment & NLP Pipeline
 
-### 🏗️ Pipeline Architecture
-![Pipeline Architecture](assets/pipeline-system2.png)
+Daily batch job that converts raw parenting-community WhatsApp chats into brand-level sentiment data (18 tracked infant-formula brands/sub-brands + "other brands"), ready for BI dashboards and CS/PR alerting.
 
-### 🌟 Key Functional Capabilities
+### 🏗️ Pipeline Flow
 
-* **🧠 Granular Sentiment & Crisis Alerting:** Scans daily brand discussions and flags urgent negative feedback (attaching chat group, sender phone, timestamp, and quoted messages) to customer service teams.
-* **🛡️ 30-Day Historical Risk Profiling:** Tracks cross-group engagement history over 30 days to tag accounts into *Real User*, *Watchlist*, *Commercial Spammer*, or *Competitor Seeder*.
-* **📈 Zero-Touch Executive Dashboards:** Automatically aggregates volume, sentiment distribution, and topic trends, updating management dashboards with zero manual intervention.
+```mermaid
+flowchart LR
+    T["GitHub Actions<br/>workflow_dispatch / repository_dispatch"] --> C["Load rules from Google Sheets<br/>brand_keywords · ift_keywords · group info"]
+    C --> E["Extract messages<br/>PostgreSQL (WhatsApp store)"]
+    E --> D["Clean & de-duplicate<br/>phone normalisation · internal tagging"]
+    D --> K["Keyword layer<br/>longest-match + exclusion mask"]
+    K -->|brand / formula hits only| L["LLM classification<br/>Poe API · gemini-3.1-flash-lite<br/>+ 5-message group context"]
+    L --> W1["Google Sheets<br/>yymm_DailyData_Part1/2"]
+    L --> W2["Supabase<br/>message_full"]
+    W1 --> O["Dashboard & email alerts"]
+```
+
+### 🌟 What the Pipeline Does
+
+* **⚙️ Business-editable rules:** Brand keywords (`CONTAINS` / `COMBO` / `REGEX` match types), topic keywords and exclusion words live in Google Sheets, so the marketing team can tune detection without touching code.
+* **🧹 Smart de-duplication:** Merges the same message seen twice within 60 seconds in the same group (e.g. WhatsApp virtual ID vs. real number), keeps the highest-quality phone format, and tags internal/staff accounts from a private list.
+* **💰 Cost-controlled AI:** A longest-match keyword layer (with exclusion masking) decides which messages need the LLM; only brand or formula-feature mentions are sent, processed with 10 parallel workers.
+* **🧠 Context-aware sentiment:** Each candidate message is sent with its quoted message and up to 5 previous messages from the same group. The LLM returns structured JSON: spam flag, per-brand sentiment (`P` positive · `I` neutral/inquiry · `N` negative) and the original message it replies to.
+* **🛡️ Anti-hallucination guardrails:** Prompt rules and few-shot examples stop the model from guessing brands from generic ingredients (e.g. DHA, hydrolysed), from misreading education terms like "A+", or from linking pronouns to brands that never appear in context. Spam (resale, points-sharing, promo forwards) is filtered out.
+* **🔗 Reply attribution:** When a message answers an earlier one, Python re-aligns the model's `reply_origin` to the full original text (emoji included) in the context window, producing a clean `reply` column.
+* **🏷️ Brand roll-up & alert flag:** Sub-brand sentiments roll up to the parent brand (N > P > I priority) and a `warning` flag marks negative mentions of the core brand for CS/PR follow-up.
+* **🚦 Circuit breaker:** An AI health check runs before the batch, and the job aborts after 5 consecutive LLM failures (e.g. exhausted API credit) so no half-processed data is written.
+* **💾 Dual-write output:** A fixed 31-column schema is appended to half-month Google Sheets (`yymm_DailyData_Part1` = days 1–15, `Part2` = 16–end) with formula-injection escaping and 429 back-off retries, and bulk-inserted into a Supabase `message_full` table. A test-sheet mode redirects all output away from production sheets.
+* **🔁 One-click reruns:** Runs yesterday (HKT) by default; enter a `target_date` (`yymmdd`) in the workflow form to reprocess a specific day.
+
+### 🧰 Supporting Scripts
+
+* `dashboard.py` – aggregates a day's DailyData into the monthly Google Sheets dashboard (reach, group categories, brand sentiment counts). Run separately with `--dashboard_id`.
+* `scripts/email_automation/` + `docs/MANUS_EMAIL_AUTOMATION.md` – daily summary email with negative-sentiment alerts, orchestrated by a Manus AI schedule.
+
+### 🚀 Setup
+
+1. `pip install -r requirements.txt` (Python 3.11)
+2. Copy `.env.example` → `.env` and fill in values (for local runs), and place the Google service-account key at `service_account.json`. Share the keyword, group-info and DailyData sheets with the service account.
+3. Optional: copy `internal_phones.example.json` → `internal_phones.json` (gitignored) to tag internal accounts.
+4. `python main.py` (set `MANUAL_DATE=yymmdd` to process a specific date).
+
+**GitHub Actions secrets** (workflow: `.github/workflows/daily_whatsapp_nlp.yml`):
+
+| Secret | Required | Purpose |
+| :--- | :--- | :--- |
+| `GCP_SA_KEY` | ✅ | Google service-account JSON |
+| `POE_API_KEY` | ✅ | Poe API key (LLM) |
+| `DB_HOST`, `DB_NAME`, `DB_USER`, `DB_PASSWORD` | ✅ | Source PostgreSQL (WhatsApp message store) |
+| `DB_PORT` | optional | Defaults to `5432` |
+| `KEYWORDS_SHEET_URL` | ✅ | Sheet with `brand_keywords` / `ift_keywords` tabs |
+| `GROUPINFO_SHEET_URL` | ✅ | Sheet with `groups` tab (group ID → name) |
+| `SUPABASE_DB_HOST`, `SUPABASE_DB_USER`, `SUPABASE_DB_PASSWORD` | for Supabase | Supabase session pooler; write is skipped if host/password is empty |
+| `SUPABASE_DB_PORT`, `SUPABASE_DB_NAME` | optional | Default `5432` / `postgres` |
+| `TEST_TARGET_SHEET_URL` | optional | If set, all output goes to this test sheet |
+| `INTERNAL_PHONES_JSON` | optional | JSON like `{"LabelA": ["9xxxxxxx"], "LabelB": [...]}` for the `Internal` column |
+
+Trigger: **Actions → Daily WhatsApp Data NLP Pipeline → Run workflow** (optional `target_date`), or a `repository_dispatch` event of type `trigger-nlp-pipeline` from an external scheduler.
 
 ---
 
@@ -67,20 +116,20 @@ The system has undergone end-to-end verification across operational workflows:
 | **Daily Data Processing** | 2 – 3 Hours / day | ~15 Minutes / day | **>80% Operational Time Saved** |
 | **Data Querying Barrier** | Relies on data/IT team requests | Instant via WhatsApp conversation | **Zero learning curve** for non-technical teams |
 | **Crisis Detection** | Discovered passively after complaints | Automated daily morning email alerts | Enables **proactive PR & CS intervention** |
-| **Community Quality** | Manual review of spam accounts | Automated 30-day behavior profiling | Protects organic community trust |
 
 ---
 
 ## 🛠️ Technology Stack
 
-* **AI & Multi-Modal Frameworks:** Google Vertex AI (Gemini Flash), MarkItDown, Python-docx, Prompt Engineering
+* **AI & Multi-Modal Frameworks:** Google Vertex AI (Gemini Flash), Poe API (OpenAI-compatible, `gemini-3.1-flash-lite`), MarkItDown, Python-docx, Prompt Engineering
 * **Cloud & Serverless:** Google Cloud Platform (Cloud Functions, Cloud Run, Cloud Pub/Sub, Cloud Secret Manager, Cloud Firestore)
-* **Data & Storage:** PostgreSQL, SQLAlchemy (Connection Pooling), Pandas
+* **Data & Storage:** PostgreSQL, Supabase, SQLAlchemy (Connection Pooling), psycopg2, Pandas
 * **Automation & Gateways:** Evolution API (WhatsApp Gateway), Google Workspace APIs (Sheets & Drive), Gmail SMTP, GitHub Actions
 
 ---
 
 ## 🔒 Security & Privacy Notice
 
-* **Encrypted Secrets:** All credentials, database URIs, and API tokens are managed via GCP Secret Manager and GitHub Secrets.
+* **Encrypted Secrets:** All credentials, database hosts, sheet URLs and API tokens are supplied via environment variables (GCP Secret Manager / GitHub Secrets); the code ships with no real defaults (see `.env.example`).
+* **Private Lists Stay Private:** Internal account phone lists are loaded at runtime from a secret or a gitignored local file, never committed.
 * **De-Identified Data:** All demonstration logs, database schemas, and media samples are sanitized for public presentation.
