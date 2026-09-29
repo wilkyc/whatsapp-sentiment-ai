@@ -53,23 +53,13 @@ Daily batch job that converts raw parenting-community WhatsApp chats into brand-
 
 ### 🏗️ Pipeline Flow
 
-```mermaid
-flowchart LR
-    T["GitHub Actions<br/>workflow_dispatch / repository_dispatch"] --> C["Load rules from Google Sheets<br/>brand_keywords · ift_keywords · group info"]
-    C --> E["Extract messages<br/>PostgreSQL (WhatsApp store)"]
-    E --> D["Clean & de-duplicate<br/>phone normalisation · internal tagging"]
-    D --> K["Keyword layer<br/>longest-match + exclusion mask"]
-    K -->|brand / formula hits only| L["LLM classification<br/>Poe API · gemini-3.1-flash-lite<br/>+ 5-message group context"]
-    L --> W1["Google Sheets<br/>yymm_DailyData_Part1/2"]
-    L --> W2["Supabase<br/>message_full"]
-    W1 --> O["Dashboard & email alerts"]
-```
+![System 2 Pipeline](assets/pipeline-system2.jpg)
 
 ### 🌟 What the Pipeline Does
 
 * **⚙️ Business-editable rules:** Brand keywords (`CONTAINS` / `COMBO` / `REGEX` match types), topic keywords and exclusion words live in Google Sheets, so the marketing team can tune detection without touching code.
 * **🧹 Smart de-duplication:** Merges the same message seen twice within 60 seconds in the same group (e.g. WhatsApp virtual ID vs. real number), keeps the highest-quality phone format, and tags internal/staff accounts from a private list.
-* **💰 Cost-controlled AI:** A longest-match keyword layer (with exclusion masking) decides which messages need the LLM; only brand or formula-feature mentions are sent, processed with 10 parallel workers.
+* **💰 Cost-controlled AI:** A longest-match keyword layer (with exclusion masking) decides which messages need the LLM; only messages that mention a tracked brand are sent, processed with 10 parallel workers.
 * **🧠 Context-aware sentiment:** Each candidate message is sent with its quoted message and up to 5 previous messages from the same group. The LLM returns structured JSON: spam flag, per-brand sentiment (`P` positive · `I` neutral/inquiry · `N` negative) and the original message it replies to.
 * **🛡️ Anti-hallucination guardrails:** Prompt rules and few-shot examples stop the model from guessing brands from generic ingredients (e.g. DHA, hydrolysed), from misreading education terms like "A+", or from linking pronouns to brands that never appear in context. Spam (resale, points-sharing, promo forwards) is filtered out.
 * **🔗 Reply attribution:** When a message answers an earlier one, Python re-aligns the model's `reply_origin` to the full original text (emoji included) in the context window, producing a clean `reply` column.
