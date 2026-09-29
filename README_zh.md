@@ -53,23 +53,13 @@
 
 ### 🏗️ 數據管線流程 (Pipeline Flow)
 
-```mermaid
-flowchart LR
-    T["GitHub Actions<br/>workflow_dispatch / repository_dispatch"] --> C["讀取 Google Sheets 規則<br/>brand_keywords · ift_keywords · 群組資訊"]
-    C --> E["抽取訊息<br/>PostgreSQL（WhatsApp 資料庫）"]
-    E --> D["清洗與去重<br/>號碼標準化 · 內部帳號標記"]
-    D --> K["關鍵詞層<br/>最長匹配 + 排除詞遮罩"]
-    K -->|僅品牌 / 配方賣點命中| L["LLM 語義分類<br/>Poe API · gemini-3.1-flash-lite<br/>+ 同群前 5 則上下文"]
-    L --> W1["Google Sheets<br/>yymm_DailyData_Part1/2"]
-    L --> W2["Supabase<br/>message_full"]
-    W1 --> O["儀表板與郵件警報"]
-```
+![系統二流程圖](assets/pipeline-system2-zh.jpg)
 
 ### 🌟 核心功能亮點
 
 * **⚙️ 業務團隊可自行維護規則：** 品牌關鍵詞（`CONTAINS` / `COMBO` / `REGEX` 三種匹配方式）、話題關鍵詞與排除詞均存放於 Google Sheets，行銷同事無需改程式即可調整識別邏輯。
 * **🧹 智能去重：** 同一群組內 60 秒內內容相同的訊息自動合併（如 WhatsApp 虛擬 ID 與真實號碼重複入庫），保留品質最佳的號碼格式，並依私有名單標記內部／員工帳號。
-* **💰 AI 成本控制：** 以最長匹配關鍵詞層（含排除詞遮罩）預先篩選，只有提及品牌或配方賣點的訊息才送入 LLM，並以 10 條執行緒並行處理。
+* **💰 AI 成本控制：** 以最長匹配關鍵詞層（含排除詞遮罩）預先篩選，只有提及追蹤品牌的訊息才送入 LLM，並以 10 條執行緒並行處理。
 * **🧠 上下文情緒判斷：** 每則候選訊息連同引用訊息及同群組前 5 則發言一併分析，LLM 以結構化 JSON 回傳：是否 Spam、各品牌立場（`P` 正面 · `I` 中立／詢問 · `N` 負面）及所回覆的前文原句。
 * **🛡️ 防 AI 腦補機制：** 透過提示詞規則與 Few-shot 範例，禁止模型憑通用成分（如 DHA、水解）猜測品牌、誤判教育用語「A+」，或將代名詞關聯到前文從未出現的品牌；轉讓、代儲分、促銷轉發等訊息自動判為 Spam。
 * **🔗 回覆溯源 (reply)：** 當訊息是回應前文時，Python 會把模型輸出的 `reply_origin` 與上下文逐句比對，還原完整原句（保留 Emoji），寫入 `reply` 欄位。
