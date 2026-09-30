@@ -78,6 +78,11 @@ https://github.com/user-attachments/assets/2c191493-7525-4425-b3ee-d2e9db2a7130
 
 ![系統二流程圖](assets/pipeline-system2-zh.jpg)
 
+#### 🔁 關鍵詞自我迭代正循環
+關鍵詞規則不是靠人手調整的。一個獨立的 **Keyword Agent** 會檢查 Pipeline 的分析結果，找出漏判和誤判，然後更新規則。下一輪運行會自動使用新規則，所以每跑一輪，準確度都會提升。
+
+![關鍵詞正循環](assets/keyword-loop-zh.png)
+
 ### 🌟 核心功能亮點
 
 * **⚙️ 業務團隊可自行維護規則：** 品牌關鍵詞（`CONTAINS` / `COMBO` / `REGEX` 三種匹配方式，每條對應一組 `Brand` + `Sub_Brand` 代碼）、話題關鍵詞與排除詞均存放於 Google Sheets，行銷同事無需改程式即可調整識別邏輯。啟動時會做詞庫健康自檢，核心品牌詞漏設時會發出警告。詳見[關鍵詞表結構](#-關鍵詞表結構)。
