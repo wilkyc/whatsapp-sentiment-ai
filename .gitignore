@@ -29,3 +29,4 @@ ENV/
 temp_raw_data/
 *.csv
 *.xlsx
+!examples/*.example.csv

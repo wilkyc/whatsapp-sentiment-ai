@@ -1,0 +1,7 @@
+Keyword,Match_Type,Combo_With,Brand,Sub_Brand
+美素,CONTAINS,,friso,master
+美素皇家,CONTAINS,,friso,prestige
+皇家,COMBO,美素,friso,prestige
+Illuma,CONTAINS,,illuma,master
+有機,COMBO,illuma,illuma,organic
+能恩\s*(HA|水解),REGEX,,nestle,nan_ha
