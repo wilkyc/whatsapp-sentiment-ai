@@ -20,9 +20,12 @@ This repository demonstrates the end-to-end implementation of **Generative AI (G
 ![Cloud & Agent Architecture](assets/architecture-system1.png)
 
 ### 🎬 Demo Video (2:13)
-[![System 1 demo – click to play](assets/demo-system1-poster.jpg)](assets/demo-system1.mp4)
 
-▶️ **[Watch the full demo (MP4, English subtitles)](assets/demo-system1.mp4)**. Recorded on the live system. Sensitive company data (chat list, contacts, emails, database schema, customer data, internal brand names) is redacted.
+
+https://github.com/user-attachments/assets/b4423a86-953f-437b-a650-f37288afe17b
+
+
+Recorded on the live system. Sensitive company data (chat list, contacts, emails, database schema, customer data, internal brand names) is redacted.
 
 | Time | Scenario |
 |---|---|
