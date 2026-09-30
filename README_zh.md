@@ -22,7 +22,7 @@
 ### 🎬 實機示範影片 (2:13)
 
 
-Uploading whatsapp_ai_demo_2026-09-30_final.mp4…
+https://github.com/user-attachments/assets/2c191493-7525-4425-b3ee-d2e9db2a7130
 
 
 於實際運行系統錄製，公司敏感資料（對話列表、聯絡人、電郵、資料庫結構、客戶數據、內部品牌名稱）均已打碼。
