@@ -78,6 +78,11 @@ Hourly incremental job that converts raw parenting-community WhatsApp chats into
 
 ![System 2 Pipeline](assets/pipeline-system2.jpg)
 
+#### 🔁 Self-improving keyword loop
+The keyword rules are not tuned by hand. A separate **Keyword Agent** reviews the pipeline's results, finds missed and false matches, and updates the rules. The next run picks up the new rules automatically, so accuracy improves with every cycle.
+
+![Keyword loop](assets/keyword-loop-en.png)
+
 ### 🌟 What the Pipeline Does
 
 * **⚙️ Business-editable rules:** Brand keywords (`CONTAINS` / `COMBO` / `REGEX` match types, each mapped to a `Brand` + `Sub_Brand` code), topic keywords and exclusion words live in Google Sheets, so the marketing team can tune detection without touching code. A startup health check warns when a core brand term is missing from the keyword sheet. See [Keyword Sheet Structure](#-keyword-sheet-structure).
