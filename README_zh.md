@@ -20,9 +20,12 @@
 ![系統一架構圖](assets/architecture-system1-zh.png)
 
 ### 🎬 實機示範影片 (2:13)
-[![系統一示範影片（點擊播放）](assets/demo-system1-poster.jpg)](assets/demo-system1.mp4)
 
-▶️ **[觀看完整示範影片（MP4，英文字幕）](assets/demo-system1.mp4)**。於實際運行系統錄製，公司敏感資料（對話列表、聯絡人、電郵、資料庫結構、客戶數據、內部品牌名稱）均已打碼。
+
+Uploading whatsapp_ai_demo_2026-09-30_final.mp4…
+
+
+於實際運行系統錄製，公司敏感資料（對話列表、聯絡人、電郵、資料庫結構、客戶數據、內部品牌名稱）均已打碼。
 
 | 時間 | 測試場景 |
 |---|---|
