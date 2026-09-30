@@ -69,6 +69,11 @@ The system has undergone end-to-end verification across operational workflows:
 
 Hourly incremental job that converts raw parenting-community WhatsApp chats into brand-level sentiment data (35 standard brand / sub-brand columns across 9 brand families + "other brands"), ready for BI dashboards and CS/PR alerting.
 
+> **🌐 Built to be reusable across industries.** Infant formula is the real-world deployment, but the engine itself is industry-agnostic:
+> * **Rules live in a sheet, not in code:** brands, sub-brands, keywords, context words and exclusions are all maintained in Google Sheets. Monitoring a different industry (beauty, consumer electronics, F&B, insurance…) mainly means swapping the keyword sheet and updating one column mapping (`PRODUCT_SHORT_BRANDS` / `CODE_TO_COLUMN_MAP`).
+> * **Any chat-style source:** WhatsApp is the current input, but the same pipeline fits Telegram groups, social-media comments or customer-service transcripts.
+> * **A reusable method:** rule-based pre-filtering to control LLM cost → context-aware LLM sentiment → brand-hierarchy roll-up → negative-sentiment alerts.
+
 ### 🏗️ Pipeline Flow
 
 ![System 2 Pipeline](assets/pipeline-system2.jpg)
