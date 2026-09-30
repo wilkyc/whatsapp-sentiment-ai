@@ -118,7 +118,7 @@ Trigger: **Actions → Hourly WhatsApp Data NLP Pipeline → Run workflow** (opt
 
 ### 🔑 Keyword Sheet Structure
 
-The real keyword lists are business data and stay in a private Google Sheet. Example files with the same columns are in [`examples/`](examples/).
+The full production lists (193 brand rules across 14 brands, 263 topic / context / exclusion words in 50+ categories) stay in a private Google Sheet. A curated excerpt with the real design notes is in [`examples/`](examples/).
 
 **`brand_keywords` tab** – one row per detection rule:
 
@@ -130,6 +130,15 @@ The real keyword lists are business data and stay in a private Google Sheet. Exa
 | `Brand` / `Sub_Brand` | Brand code pair (e.g. `friso` / `prestige`), mapped to one of the 35 output columns by `CODE_TO_COLUMN_MAP` in `main.py`; `master` = the parent brand itself |
 
 **`ift_keywords` tab** – `type` + `keyword`: `formula_feature` (infant-formula context words that support short-name resolution), `general` (topic keywords), `exclude` (phrases masked before matching to avoid false hits).
+
+**Design principles behind the keyword set:**
+
+1. **Anchor terms (`CONTAINS`)** – Chinese and English brand names plus common typos and homophones that parents actually type (e.g. `新美力` for 心美力).
+2. **Typo anchors (`REGEX`)** – one pattern catches a family of misspellings without over-matching (e.g. `牛(?:[藍蘭]牌?|腩牌)` catches 牛藍／牛蘭／牛腩牌 but not 牛腩湯).
+3. **Context binding (`COMBO`)** – short or ambiguous words only count next to their parent brand or a formula context word: `prestige` / `signature` are credit-card words, `雀巢` also sells coffee, `neo` / `php` are everyday English or tech terms, `a仔` is local mum slang.
+4. **Connector-word penetration (`REGEX`)** – product names are matched even with Cantonese filler in between (`美素嘅皇家`, `愛他美個白金`), in both word orders, with negative lookahead for financial phrases (白金卡).
+5. **Exclusion masks (`exclude`)** – longer everyday phrases are masked before matching so shorter keywords can't fire inside them: `有機會` vs 有機, `visa signature`, `考到A+`, `大人奶粉`.
+6. **Tiered topic words** – `formula_feature` words are strong triggers that confirm an infant-formula context; many `general` words are deliberately downgraded to tag-only so they don't pull unrelated messages (eczema creams, probiotic drops, strollers) into the LLM.
 
 ---
 

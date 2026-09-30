@@ -118,7 +118,7 @@ https://github.com/user-attachments/assets/2c191493-7525-4425-b3ee-d2e9db2a7130
 
 ### 🔑 關鍵詞表結構
 
-真實關鍵詞清單屬商業資料，保存在私有 Google Sheet 中；[`examples/`](examples/) 內提供欄位相同的示範檔。
+完整正式詞庫（14 個品牌共 193 條品牌規則，以及 50 多個類別共 263 個話題／語境／排除詞）保存在私有 Google Sheet；[`examples/`](examples/) 內為附真實設計備註的精選節錄。
 
 **`brand_keywords` 分頁**：每行一條識別規則。
 
@@ -130,6 +130,15 @@ https://github.com/user-attachments/assets/2c191493-7525-4425-b3ee-d2e9db2a7130
 | `Brand` / `Sub_Brand` | 品牌代碼組合（如 `friso` / `prestige`），由 `main.py` 的 `CODE_TO_COLUMN_MAP` 對應到 35 個輸出欄位之一；`master` 代表母品牌本身 |
 
 **`ift_keywords` 分頁**：`type` + `keyword`。`formula_feature`（奶粉情境詞，用於輔助短稱解析）、`general`（話題關鍵詞）、`exclude`（匹配前先遮罩的詞，避免誤判）。
+
+**關鍵詞設計思路：**
+
+1. **錨點詞（`CONTAINS`）**：中英文品牌名，加上家長實際會打的錯別字與同音字（如把心美力打成 `新美力`）。
+2. **錯別字錨點（`REGEX`）**：一條規則涵蓋一整類錯寫而不誤中，例如 `牛(?:[藍蘭]牌?|腩牌)` 能抓到牛藍／牛蘭／牛腩牌，但不會命中牛腩湯。
+3. **上下文綁定（`COMBO`）**：有歧義的短詞必須與母品牌或奶粉語境同時出現才計入。例如 `prestige`／`signature` 是信用卡用語，`雀巢` 也賣咖啡，`neo`／`php` 是日常英文或技術詞，`a仔` 是港媽口語。
+4. **連接詞穿透（`REGEX`）**：即使中間夾著廣東話虛詞（`美素嘅皇家`、`愛他美個白金`）也能識別產品，前後語序都支援，並以負向預查排除金融用語（白金卡）。
+5. **排除詞遮罩（`exclude`）**：先遮罩較長的日常用語，避免短關鍵詞在其中誤中，例如 `有機會` 之於有機、`visa signature`、`考到A+`、`大人奶粉`。
+6. **分層話題詞**：`formula_feature` 屬強觸發詞，用來確認奶粉語境；不少 `general` 詞刻意降級為「僅打標」，避免濕疹膏、益生菌滴劑、BB 車等無關訊息被送進 LLM。
 
 ---
 
