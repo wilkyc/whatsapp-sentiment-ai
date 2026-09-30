@@ -64,6 +64,7 @@ jobs:
           SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
           KEYWORDS_SPREADSHEET_ID: ${{ secrets.KEYWORDS_SPREADSHEET_ID }}
           KEYWORDS_SHEET_URL: ${{ secrets.KEYWORDS_SHEET_URL }}
+          BRAND_SHEET_NAME: ${{ secrets.BRAND_SHEET_NAME }}
           GROUPINFO_SHEET_URL: ${{ secrets.GROUPINFO_SHEET_URL }}
           TEST_TARGET_SHEET_URL: ${{ secrets.TEST_TARGET_SHEET_URL }}
           INTERNAL_PHONES_JSON: ${{ secrets.INTERNAL_PHONES_JSON }}

@@ -72,7 +72,7 @@ CONTEXT_HISTORY_MAX_MINUTES = 30       # 前文對話衰減時間窗口 (分鐘)
 # 🌐 Google Sheets 雙表設定 (IDs / URLs supplied via env / GitHub Secrets)
 # KEYWORDS_SPREADSHEET_ID takes priority; KEYWORDS_SHEET_URL is still accepted.
 KEYWORDS_SPREADSHEET_ID = _env("KEYWORDS_SPREADSHEET_ID") or _sheet_id_from_url(_env("KEYWORDS_SHEET_URL"))
-BRAND_SHEET_NAME = _env("BRAND_SHEET_NAME", "brand_keywords")
+BRAND_SHEET_NAME = _env("BRAND_SHEET_NAME") or "brand_keywords"
 IFT_SHEET_NAME = _env("IFT_SHEET_NAME", "ift_keywords")
 
 GROUPINFO_SHEET_URL = _env("GROUPINFO_SHEET_URL")
