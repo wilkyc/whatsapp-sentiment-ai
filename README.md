@@ -19,6 +19,21 @@ This repository demonstrates the end-to-end implementation of **Generative AI (G
 ### 🏗️ Cloud & Agent Architecture
 ![Cloud & Agent Architecture](assets/architecture-system1.png)
 
+### 🎬 Demo Video (2:13)
+[![System 1 demo – click to play](assets/demo-system1-poster.jpg)](assets/demo-system1.mp4)
+
+▶️ **[Watch the full demo (MP4, English subtitles)](assets/demo-system1.mp4)**. Recorded on the live system. Sensitive company data (chat list, contacts, emails, database schema, customer data, internal brand names) is redacted.
+
+| Time | Scenario |
+|---|---|
+| 0:00 | Test 1: Multi-turn memory & `/reset` |
+| 0:20 | Test 2: Natural-language database query (Text-to-SQL) |
+| 0:51 | Test 4: Image OCR & document understanding |
+| 1:07 | Test 3 & 5: Data analysis, CSV delivery & email report |
+| 1:53 | Test 6: Real-time web search |
+
+*Test 7 (group @mention filtering & idempotency) is a production guardrail and is not shown in the video.*
+
 ### 🧪 Verified Capabilities & Test Scenarios
 
 The system has undergone end-to-end verification across operational workflows:
@@ -39,7 +54,7 @@ The system has undergone end-to-end verification across operational workflows:
   * **Workflow:** Connects with Gmail SMTP to compile formatted HTML reports with data attachments.
   * **Result:** Pushes formatted executive summaries with generated `.csv` files directly to designated stakeholder inboxes.
 * **Test 6: Real-Time Web Grounding Search**
-  * **Workflow:** Dispatches queries requiring external real-time data (e.g., live exchange rates, financial news) using a dedicated Google Grounding client.
+  * **Workflow:** Dispatches queries requiring external real-time data (e.g., today's international tech news, live exchange rates) using a dedicated Google Grounding client.
   * **Result:** Accurately summarizes live web data without conflicting with internal tool schemas.
 * **Test 7: Group Mention Filtering & Idempotency (Production Guardrail)**
   * **Workflow:** Filters non-relevant group messages and avoids duplicate executions from Pub/Sub retries.
