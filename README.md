@@ -11,7 +11,7 @@
 This repository demonstrates the end-to-end implementation of **Generative AI (Gemini 3.8 Flash)** and **Google Cloud Platform (GCP)** architecture in real-world business operations. The solution consists of two complementary systems:
 
 1. **🤖 Multi-Modal WhatsApp AI Operations Assistant (Real-Time)**: An on-demand conversational agent deployed on GCP. Non-technical staff can query databases via natural language, extract data from documents/images, and dispatch CSV/email reports directly within WhatsApp.
-2. **📊 WhatsApp Community Sentiment & NLP Pipeline (Automated Batch)**: A GitHub Actions data pipeline that pulls the previous day's WhatsApp group messages, de-duplicates and keyword-filters them, runs context-aware LLM brand-sentiment classification, and dual-writes a 31-column dataset to Google Sheets and Supabase for dashboards and negative-sentiment alerts.
+2. **📊 WhatsApp Community Sentiment & NLP Pipeline (Automated Hourly Batch)**: A GitHub Actions data pipeline that pulls the last hour's WhatsApp group messages, de-duplicates and keyword-filters them, runs context-aware LLM brand-sentiment classification, and dual-writes a 48-column dataset to Google Sheets and Supabase for dashboards and negative-sentiment alerts.
 
 ---
 
@@ -67,7 +67,7 @@ The system has undergone end-to-end verification across operational workflows:
 
 ## 📊 System 2: WhatsApp Community Sentiment & NLP Pipeline
 
-Daily batch job that converts raw parenting-community WhatsApp chats into brand-level sentiment data (18 tracked infant-formula brands/sub-brands + "other brands"), ready for BI dashboards and CS/PR alerting.
+Hourly incremental job that converts raw parenting-community WhatsApp chats into brand-level sentiment data (35 standard brand / sub-brand columns across 9 brand families + "other brands"), ready for BI dashboards and CS/PR alerting.
 
 ### 🏗️ Pipeline Flow
 
@@ -75,16 +75,17 @@ Daily batch job that converts raw parenting-community WhatsApp chats into brand-
 
 ### 🌟 What the Pipeline Does
 
-* **⚙️ Business-editable rules:** Brand keywords (`CONTAINS` / `COMBO` / `REGEX` match types), topic keywords and exclusion words live in Google Sheets, so the marketing team can tune detection without touching code.
+* **⚙️ Business-editable rules:** Brand keywords (`CONTAINS` / `COMBO` / `REGEX` match types, each mapped to a `Brand` + `Sub_Brand` code), topic keywords and exclusion words live in Google Sheets, so the marketing team can tune detection without touching code. A startup health check warns when a core brand term is missing from the keyword sheet. See [Keyword Sheet Structure](#-keyword-sheet-structure).
 * **🧹 Smart de-duplication:** Merges the same message seen twice within 60 seconds in the same group (e.g. WhatsApp virtual ID vs. real number), keeps the highest-quality phone format, and tags internal/staff accounts from a private list.
 * **💰 Cost-controlled AI:** A longest-match keyword layer (with exclusion masking) decides which messages need the LLM; only messages that mention a tracked brand are sent, processed with 10 parallel workers.
 * **🧠 Context-aware sentiment:** Each candidate message is sent with its quoted message and up to 5 previous messages from the same group. The LLM returns structured JSON: spam flag, per-brand sentiment (`P` positive · `I` neutral/inquiry · `N` negative) and the original message it replies to.
 * **🛡️ Anti-hallucination guardrails:** Prompt rules and few-shot examples stop the model from guessing brands from generic ingredients (e.g. DHA, hydrolysed), from misreading education terms like "A+", or from linking pronouns to brands that never appear in context. Spam (resale, points-sharing, promo forwards) is filtered out.
+* **🧩 Contextual short-name resolution:** Short product names that are ambiguous on their own (e.g. a sub-brand name without its parent brand, `COMBO` rules) are only counted when the context confirms them: the quoted message mentions the parent brand, the parent brand appeared in the same group within the last 30 minutes, or the directly preceding message clearly talks about infant formula.
 * **🔗 Reply attribution:** When a message answers an earlier one, Python re-aligns the model's `reply_origin` to the full original text (emoji included) in the context window, producing a clean `reply` column.
-* **🏷️ Brand roll-up & alert flag:** Sub-brand sentiments roll up to the parent brand (N > P > I priority) and a `warning` flag marks negative mentions of the core brand for CS/PR follow-up.
+* **🏷️ Brand roll-up & alert flag:** Sub-brand sentiments automatically roll up to their parent brand column (`MASTER_BRAND_ROLLUP`, N > P > I priority), a literal-match safety net marks a brand as `I` if the LLM missed a brand that was explicitly named, and a `warning` flag marks negative mentions of the core brand for CS/PR follow-up.
 * **🚦 Circuit breaker:** An AI health check runs before the batch, and the job aborts after 5 consecutive LLM failures (e.g. exhausted API credit) so no half-processed data is written.
-* **💾 Dual-write output:** A fixed 31-column schema is appended to half-month Google Sheets (`yymm_DailyData_Part1` = days 1–15, `Part2` = 16–end) with formula-injection escaping and 429 back-off retries, and bulk-inserted into a Supabase `message_full` table. A test-sheet mode redirects all output away from production sheets.
-* **🔁 One-click reruns:** Runs yesterday (HKT) by default; enter a `target_date` (`yymmdd`) in the workflow form to reprocess a specific day.
+* **💾 Dual-write output:** A fixed 48-column schema (12 message fields + 35 brand columns + `Other_Brands`) is appended to half-month Google Sheets (`yymm_DailyData_Part1` = days 1–15, `Part2` = 16–end) with formula-injection escaping and 429 back-off retries, and bulk-inserted into a Supabase `message_full` table. A test-sheet mode redirects all output away from production sheets.
+* **🔁 Incremental runs & reruns:** Each run processes the last 65 minutes (HKT, a 5-minute overlap guards against gaps), and a concurrency lock queues overlapping runs so two jobs never write at once. Reruns via the workflow's `target_date` input: a full day (`260928`) or a precise time range (`260928 14:00-16:00`).
 
 ### 🧰 Supporting Scripts
 
@@ -96,7 +97,7 @@ Daily batch job that converts raw parenting-community WhatsApp chats into brand-
 1. `pip install -r requirements.txt` (Python 3.11)
 2. Copy `.env.example` → `.env` and fill in values (for local runs), and place the Google service-account key at `service_account.json`. Share the keyword, group-info and DailyData sheets with the service account.
 3. Optional: copy `internal_phones.example.json` → `internal_phones.json` (gitignored) to tag internal accounts.
-4. `python main.py` (set `MANUAL_DATE=yymmdd` to process a specific date).
+4. `python main.py` (empty `MANUAL_DATE` = last 65 minutes; `MANUAL_DATE=260928` = full day; `MANUAL_DATE="260928 14:00-16:00"` = time range).
 
 **GitHub Actions secrets** (workflow: `.github/workflows/daily_whatsapp_nlp.yml`):
 
@@ -106,14 +107,38 @@ Daily batch job that converts raw parenting-community WhatsApp chats into brand-
 | `POE_API_KEY` | ✅ | Poe API key (LLM) |
 | `DB_HOST`, `DB_NAME`, `DB_USER`, `DB_PASSWORD` | ✅ | Source PostgreSQL (WhatsApp message store) |
 | `DB_PORT` | optional | Defaults to `5432` |
-| `KEYWORDS_SHEET_URL` | ✅ | Sheet with `brand_keywords` / `ift_keywords` tabs |
+| `KEYWORDS_SPREADSHEET_ID` or `KEYWORDS_SHEET_URL` | ✅ (one of) | Sheet with `brand_keywords` / `ift_keywords` tabs (tab names overridable via `BRAND_SHEET_NAME` / `IFT_SHEET_NAME`) |
 | `GROUPINFO_SHEET_URL` | ✅ | Sheet with `groups` tab (group ID → name) |
 | `SUPABASE_DB_HOST`, `SUPABASE_DB_USER`, `SUPABASE_DB_PASSWORD` | for Supabase | Supabase session pooler; write is skipped if host/password is empty |
 | `SUPABASE_DB_PORT`, `SUPABASE_DB_NAME` | optional | Default `5432` / `postgres` |
 | `TEST_TARGET_SHEET_URL` | optional | If set, all output goes to this test sheet |
 | `INTERNAL_PHONES_JSON` | optional | JSON like `{"LabelA": ["9xxxxxxx"], "LabelB": [...]}` for the `Internal` column |
 
-Trigger: **Actions → Daily WhatsApp Data NLP Pipeline → Run workflow** (optional `target_date`), or a `repository_dispatch` event of type `trigger-nlp-pipeline` from an external scheduler.
+Trigger: **Actions → Hourly WhatsApp Data NLP Pipeline → Run workflow** (optional `target_date`), or an hourly `repository_dispatch` event of type `trigger-nlp-pipeline` from an external scheduler (`client_payload.target_date` is also accepted).
+
+### 🔑 Keyword Sheet Structure
+
+The full production lists (193 brand rules across 14 brands, 263 topic / context / exclusion words in 50+ categories) stay in a private Google Sheet. A curated excerpt with the real design notes is in [`examples/`](examples/).
+
+**`brand_keywords` tab** – one row per detection rule:
+
+| Column | Meaning |
+| :--- | :--- |
+| `Keyword` | Text or regex to match |
+| `Match_Type` | `CONTAINS` (plain match), `COMBO` (ambiguous short name, only counted with context, see above), `REGEX` |
+| `Combo_With` | For `COMBO`: the parent-brand word that must appear in context |
+| `Brand` / `Sub_Brand` | Brand code pair (e.g. `friso` / `prestige`), mapped to one of the 35 output columns by `CODE_TO_COLUMN_MAP` in `main.py`; `master` = the parent brand itself |
+
+**`ift_keywords` tab** – `type` + `keyword`: `formula_feature` (infant-formula context words that support short-name resolution), `general` (topic keywords), `exclude` (phrases masked before matching to avoid false hits).
+
+**Design principles behind the keyword set:**
+
+1. **Anchor terms (`CONTAINS`)** – Chinese and English brand names plus common typos and homophones that parents actually type (e.g. `新美力` for 心美力).
+2. **Typo anchors (`REGEX`)** – one pattern catches a family of misspellings without over-matching (e.g. `牛(?:[藍蘭]牌?|腩牌)` catches 牛藍／牛蘭／牛腩牌 but not 牛腩湯).
+3. **Context binding (`COMBO`)** – short or ambiguous words only count next to their parent brand or a formula context word: `prestige` / `signature` are credit-card words, `雀巢` also sells coffee, `neo` / `php` are everyday English or tech terms, `a仔` is local mum slang.
+4. **Connector-word penetration (`REGEX`)** – product names are matched even with Cantonese filler in between (`美素嘅皇家`, `愛他美個白金`), in both word orders, with negative lookahead for financial phrases (白金卡).
+5. **Exclusion masks (`exclude`)** – longer everyday phrases are masked before matching so shorter keywords can't fire inside them: `有機會` vs 有機, `visa signature`, `考到A+`, `大人奶粉`.
+6. **Tiered topic words** – `formula_feature` words are strong triggers that confirm an infant-formula context; many `general` words are deliberately downgraded to tag-only so they don't pull unrelated messages (eczema creams, probiotic drops, strollers) into the LLM.
 
 ---
 

@@ -1,0 +1,19 @@
+Keyword,Match_Type,Combo_With,Brand,Sub_Brand,Notes
+雅培,CONTAINS,,Abbott,master,主品牌中文錨點｜vNext product taxonomy
+abbott,CONTAINS,,Abbott,master,主品牌英文錨點｜vNext product taxonomy
+心美力,CONTAINS,,Abbott,similac_hmo,Similac HMO 核心系列中文錨點
+similac,CONTAINS,,Abbott,similac_hmo,Similac HMO 核心系列英文錨點
+新美力,CONTAINS,,Abbott,similac_hmo,心美力常見同音／輸入錯誤
+美[塑素][力佳],REGEX,,Friso,master,錯別字錨點：美塑力／美素佳等
+牛(?:[藍蘭]牌?|腩牌),REGEX,,Cow & Gate,master,錯別字錨點：牛藍／牛蘭／牛腩牌；不匹配牛腩湯
+保兒,COMBO,雅培,Abbott,pediasure,短稱需同句出現雅培，避免獨立短詞誤送 AI
+apta,COMBO,奶粉,Aptamil,master,英文短稱需同句有奶粉語境
+prestige,COMBO,friso,Friso,prestige,金融／信用卡高歧義詞；必須綁定 Friso
+皇家,COMBO,美素,Friso,prestige,泛稱；必須綁定美素
+雀巢,COMBO,奶粉,Nestle,master,母品牌同時售咖啡／食品；必須有奶粉語境
+a仔,COMBO,奶粉,MJN,a_plus,港媽口語；必須有奶粉語境
+neo,COMBO,aptamil,Aptamil,neo,保留既有安全限制；防 Neo Derm／日常英文誤觸
+"(?:friso|美素佳兒|美素佳儿|美素力|美素)[嘅嗰呢個出隻的之\s]{0,4}(?:金[裝装]|gold)|(?:金[裝装]|gold)[嘅嗰呢個出隻的之\s]{0,4}(?:friso|美素佳兒|美素佳儿|美素力|美素)",REGEX,,Friso,gold,產品級連接詞穿透：Friso／美素家族 + 金裝／Gold。
+"(?:friso|美素佳兒|美素佳儿|美素力|美素)[嘅嗰呢個出隻的之\s]{0,4}(?:皇家|prestige)|(?:皇家|prestige)[嘅嗰呢個出隻的之\s]{0,4}(?:friso|美素佳兒|美素佳儿|美素力|美素)",REGEX,,Friso,prestige,產品級連接詞穿透：Friso／美素家族 + 皇家／Prestige。
+"(?:愛他美|爱他美|aptamil|apta)[嘅嗰呢個出隻的之\s]{0,4}(?:白金版|白金)(?![\s]*(?:信用卡|卡))|(?:白金版|白金)[嘅嗰呢個出隻的之\s]{0,4}(?:愛他美|爱他美|aptamil|apta)",REGEX,,Aptamil,apf,產品級連接詞穿透：愛他美／Aptamil／Apta + 白金；涵蓋白金版與金融詞尾遮擋。
+"(?:美贊臣|美赞臣|enfamil|安嬰兒|安嬰寶|安兒寶|安兒健)[嘅嗰呢個出隻的之\s]{0,4}(?:a\+)|(?:a\+)[嘅嗰呢個出隻的之\s]{0,4}(?:美贊臣|美赞臣|enfamil|安嬰兒|安嬰寶|安兒寶|安兒健)",REGEX,,MJN,a_plus,產品級連接詞穿透：美贊臣／Enfamil／傳統產品名 + A+。

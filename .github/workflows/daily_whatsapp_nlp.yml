@@ -1,47 +1,55 @@
-name: Daily WhatsApp Data NLP Pipeline
+name: Hourly WhatsApp Data NLP Pipeline
 
 on:
+  # 1. 支援外部 Cron 透過 GitHub API / Webhook 喚醒，或在 GitHub 網頁手動點擊觸發
   workflow_dispatch:
     inputs:
       target_date:
-        description: '手動指定日期 (格式: yymmdd，例如 260921；若留空則自動跑昨天全天)'
+        description: '手動重跑參數 (留空=跑上一小時增量; 全天=260928; 精確時段=260928 14:00-16:00)'
         required: false
         default: ''
+
+  # 2. 支援外部各類 Webhook / Cron 服務喚醒
   repository_dispatch:
     types: [trigger-nlp-pipeline]
+
+# 💡 並發保護：若前一小時任務因處理量大仍在運行，新觸發的任務會自動排隊等待，絕不並行同時寫入！
+concurrency:
+  group: hourly-whatsapp-pipeline
+  cancel-in-progress: false
 
 jobs:
   run-pipeline:
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    timeout-minutes: 90
 
     steps:
-      - name: Checkout Repository
+      - name: 檢出專案代碼 (Checkout)
         uses: actions/checkout@v4
 
-      - name: Setup Python 3.11
+      - name: 配置 Python 3.11 環境
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
           cache: 'pip'
 
-      - name: Install Dependencies
+      - name: 安裝相依套件
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Setup Google Service Account Key
+      - name: 載入 Google 服務帳號金鑰
         env:
           GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
         run: |
           if [ -z "$GCP_SA_KEY" ]; then
-            echo "Error: GitHub Secret GCP_SA_KEY is empty!"
+            echo "❌ 錯誤: GitHub Secret [GCP_SA_KEY] 為空，請在 Repository Settings 中設定！"
             exit 1
           fi
           echo "$GCP_SA_KEY" > service_account.json
-          echo "Service account json created successfully."
+          echo "✅ 成功建立 service_account.json"
 
-      - name: Run NLP Pipeline
+      - name: 執行 WhatsApp 數據清洗與 AI 語義識別 (main.py)
         env:
           DB_HOST: ${{ secrets.DB_HOST }}
           DB_PORT: ${{ secrets.DB_PORT }}
@@ -54,17 +62,20 @@ jobs:
           SUPABASE_DB_NAME: ${{ secrets.SUPABASE_DB_NAME }}
           SUPABASE_DB_USER: ${{ secrets.SUPABASE_DB_USER }}
           SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+          KEYWORDS_SPREADSHEET_ID: ${{ secrets.KEYWORDS_SPREADSHEET_ID }}
           KEYWORDS_SHEET_URL: ${{ secrets.KEYWORDS_SHEET_URL }}
+          BRAND_SHEET_NAME: ${{ secrets.BRAND_SHEET_NAME }}
           GROUPINFO_SHEET_URL: ${{ secrets.GROUPINFO_SHEET_URL }}
           TEST_TARGET_SHEET_URL: ${{ secrets.TEST_TARGET_SHEET_URL }}
           INTERNAL_PHONES_JSON: ${{ secrets.INTERNAL_PHONES_JSON }}
           PYTHONUNBUFFERED: "1"
-          MANUAL_DATE: ${{ github.event.inputs.target_date }}
+          # 優先接收網頁手動輸入或外部 Webhook client_payload 傳入的日期/時段參數
+          MANUAL_DATE: ${{ github.event.inputs.target_date || github.event.client_payload.target_date }}
         run: |
           python main.py
 
-      - name: Cleanup Credentials
+      - name: 清理敏感憑證檔案
         if: always()
         run: |
           rm -f service_account.json
-          echo "Cleaned temporary credentials."
+          echo "🧹 已清理臨時憑證"

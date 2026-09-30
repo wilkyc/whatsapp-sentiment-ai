@@ -1,0 +1,23 @@
+type,keyword,Category,Notes
+Formula_Feature,奶粉,產品核心詞,強觸發:奶粉通用詞
+Formula_Feature,水奶,產品形態,強觸發:即飲液態配方奶
+Formula_Feature,液態奶,產品形態,強觸發:即飲配方奶
+Formula_Feature,RTF,產品形態,強觸發:Ready To Feed
+Formula_Feature,ready to feed,產品形態,強觸發:Ready To Feed
+Formula_Feature,轉奶,轉奶行為,強觸發:換奶粉
+General,成份,配方關注,降級:避免濕疹膏/洗頭水成分觸發AI回溯
+General,益生菌,賣點成分,降級:避免BioGaia等獨立益生菌滴劑觸發AI
+General,食邊隻,消費詢問,降級:避免BB車/米糊/用品詢問觸發AI
+General,想轉,消費心理,降級:避免日常用品想轉款觸發AI
+General,轉裝,產品包裝,僅打標
+General,人奶,餵哺方式,僅打標
+General,BLW,加固育兒,僅打標
+General,識企,發育動作,僅打標
+Exclude,visa signature,防誤觸,掩碼:防止信用卡誤中Signature
+Exclude,大人奶粉,防誤觸,掩碼:防止成人奶粉誤送AI
+Exclude,有機會,防誤觸,掩碼:防止誤中「有機」
+Exclude,醒目,防誤觸,掩碼:防止日常誇獎誤中
+Exclude,neo life,防誤觸,掩碼:防止保健品誤中neo
+Exclude,考到A+,防誤觸,掩碼:學術成績防誤撞A+
+Exclude,香港,防誤觸,掩碼:防止日常地址誤中「香」
+Exclude,拎開奶樽,防誤觸,掩碼:防止誤中「開奶」
