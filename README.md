@@ -8,7 +8,7 @@
 
 ## 📌 Executive Summary
 
-This repository demonstrates the end-to-end implementation of **Generative AI (Gemini Flash)** and **Google Cloud Platform (GCP)** architecture in real-world business operations. The solution consists of two complementary systems:
+This repository demonstrates the end-to-end implementation of **Generative AI (Gemini 3.8 Flash in System 1; `gemini-3.1-flash-lite` in System 2)** and **Google Cloud Platform (GCP)** architecture in real-world business operations. The solution consists of two complementary systems:
 
 1. **🤖 Multi-Modal WhatsApp AI Operations Assistant (Real-Time)**: An on-demand conversational agent deployed on GCP. Non-technical staff can query databases via natural language, extract data from documents/images, and dispatch CSV/email reports directly within WhatsApp.
 2. **📊 WhatsApp Community Sentiment & NLP Pipeline (Automated Batch)**: A GitHub Actions data pipeline, triggered manually or by an external scheduler, that pulls a time window of WhatsApp group messages (the last 65 minutes by default), de-duplicates and keyword-filters them, runs context-aware LLM brand-sentiment classification, and dual-writes a 48-column dataset to Google Sheets and Supabase for dashboards and negative-sentiment alerts.
@@ -170,10 +170,16 @@ The full production keyword lists stay in a private Google Sheet; [`examples/`](
 
 ## 🛠️ Technology Stack
 
-* **AI & Multi-Modal Frameworks:** Google Vertex AI (Gemini Flash), Poe API (OpenAI-compatible, `gemini-3.1-flash-lite`), MarkItDown, Python-docx, Prompt Engineering
+**System 1 – WhatsApp AI Operations Assistant**
+* **AI & Multi-Modal:** Google Vertex AI (Gemini 3.8 Flash), MarkItDown, Python-docx, Prompt Engineering
 * **Cloud & Serverless:** Google Cloud Platform (Cloud Functions, Cloud Run, Cloud Pub/Sub, Cloud Secret Manager, Cloud Firestore)
-* **Data & Storage:** PostgreSQL, Supabase, SQLAlchemy (Connection Pooling), psycopg2, Pandas
-* **Automation & Gateways:** Evolution API (WhatsApp Gateway), Google Workspace APIs (Sheets & Drive), Gmail SMTP, GitHub Actions
+* **Data:** PostgreSQL (read-only Text-to-SQL), SQLAlchemy (Connection Pooling)
+* **Gateways & Integrations:** Evolution API (WhatsApp Gateway), Google Workspace APIs (Drive & Sheets), Gmail SMTP
+
+**System 2 – Community Sentiment & NLP Pipeline (code in this repository)**
+* **AI:** Poe API (OpenAI-compatible) with `gemini-3.1-flash-lite`, Prompt Engineering
+* **Data & Storage:** PostgreSQL (source, psycopg2), Supabase (target), Pandas
+* **Automation & Integrations:** GitHub Actions, Google Workspace APIs (Sheets & Drive)
 
 ---
 

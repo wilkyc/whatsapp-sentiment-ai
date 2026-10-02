@@ -8,7 +8,7 @@
 
 ## 📌 專案總覽 (Executive Summary)
 
-本專案展示了如何將 **生成式 AI（Gemini Flash）** 與 **Google Cloud Platform (GCP) 雲端架構** 實際落地於日常商業營運。全套解決方案包含兩大互補的核心系統：
+本專案展示了如何將 **生成式 AI（系統一：Gemini 3.8 Flash；系統二：`gemini-3.1-flash-lite`）** 與 **Google Cloud Platform (GCP) 雲端架構** 實際落地於日常商業營運。全套解決方案包含兩大互補的核心系統：
 
 1. **🤖 WhatsApp 多模態 AI 營運小幫手（即時互動）**：部署於 GCP 雲端的智慧營運助理。團隊非技術同仁只需透過日常 WhatsApp 對話，即可直接以自然語言查詢資料庫、解析多格式文件與圖片，並一鍵產出實體報表或寄送 Email。
 2. **📊 WhatsApp 社群輿情與 NLP 數據管線（批次處理）**：以 GitHub Actions 驅動、可手動或由外部排程觸發的數據管線，抽取指定時段（預設為最近 65 分鐘）的 WhatsApp 群組訊息，完成去重與關鍵詞篩選後，交由具上下文理解的 LLM 進行品牌情緒分類，並將 48 欄標準化數據雙軌寫入 Google Sheets 與 Supabase，供儀表板及負面輿情警報使用。
@@ -170,10 +170,16 @@ https://github.com/user-attachments/assets/2c191493-7525-4425-b3ee-d2e9db2a7130
 
 ## 🛠️ 技術與工具應用 (Tech Stack)
 
-* **AI 與多模態模型：** Google Vertex AI (Gemini Flash)、Poe API（OpenAI 相容介面，`gemini-3.1-flash-lite`）、MarkItDown、Python-docx 文件多模態解析、提示詞工程 (Prompt Engineering)
+**系統一：WhatsApp 多模態 AI 營運小幫手**
+* **AI 與多模態：** Google Vertex AI (Gemini 3.8 Flash)、MarkItDown、Python-docx 文件多模態解析、提示詞工程 (Prompt Engineering)
 * **雲端與無伺服器架構：** Google Cloud Platform (Cloud Functions、Cloud Run、Cloud Pub/Sub 事件驅動、Secret Manager 密鑰管理、Cloud Firestore 狀態儲存)
-* **資料庫與數據處理：** PostgreSQL、Supabase、psycopg2、SQLAlchemy（連線池管理）、Pandas、正則表達式
-* **自動化流程與 API 串接：** Evolution API (WhatsApp 通道)、Google Workspace APIs (Sheets & Drive)、Gmail SMTP 郵件引擎、GitHub Actions 工作流程
+* **資料庫：** PostgreSQL（唯讀 Text-to-SQL）、SQLAlchemy（連線池管理）
+* **通道與 API 串接：** Evolution API (WhatsApp 通道)、Google Workspace APIs (Drive & Sheets)、Gmail SMTP 郵件引擎
+
+**系統二：社群輿情與 NLP 數據管線（代碼即本儲存庫）**
+* **AI：** Poe API（OpenAI 相容介面）搭配 `gemini-3.1-flash-lite`、提示詞工程 (Prompt Engineering)
+* **資料庫與數據處理：** PostgreSQL（來源，psycopg2）、Supabase（寫入目標）、Pandas、正則表達式
+* **自動化與 API 串接：** GitHub Actions 工作流程、Google Workspace APIs (Sheets & Drive)
 
 ---
 
