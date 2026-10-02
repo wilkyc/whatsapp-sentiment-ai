@@ -1,11 +1,19 @@
 name: Hourly WhatsApp Data NLP Pipeline
 
 on:
+  # 0. 內建排程：每小時第 5 分鐘自動喚醒 (增量模式)
+  schedule:
+    - cron: '5 * * * *'
+
   # 1. 支援外部 Cron 透過 GitHub API / Webhook 喚醒，或在 GitHub 網頁手動點擊觸發
   workflow_dispatch:
     inputs:
       target_date:
-        description: '手動重跑參數 (留空=跑上一小時增量; 全天=260928; 精確時段=260928 14:00-16:00)'
+        description: '手動重跑參數 (留空=跑上一小時增量; 單日=260928 或 2026-09-28; 跨日範圍=2026-07-01 to 2026-09-30; 精確時段=260928 14:00-16:00)'
+        required: false
+        default: ''
+      target_group_ids:
+        description: '指定 Group ID 清單 (留空=全部群組; 多個 ID 以逗號分隔)'
         required: false
         default: ''
 
@@ -71,6 +79,8 @@ jobs:
           PYTHONUNBUFFERED: "1"
           # 優先接收網頁手動輸入或外部 Webhook client_payload 傳入的日期/時段參數
           MANUAL_DATE: ${{ github.event.inputs.target_date || github.event.client_payload.target_date }}
+          # 指定群組過濾 (留空=處理所有群組)
+          TARGET_GROUP_IDS: ${{ github.event.inputs.target_group_ids || github.event.client_payload.target_group_ids }}
         run: |
           python main.py
 
