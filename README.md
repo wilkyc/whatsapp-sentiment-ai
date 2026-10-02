@@ -8,14 +8,16 @@
 
 ## 📌 Executive Summary
 
-This repository demonstrates the end-to-end implementation of **Generative AI (Gemini 3.8 Flash)** and **Google Cloud Platform (GCP)** architecture in real-world business operations. The solution consists of two complementary systems:
+This repository demonstrates the end-to-end implementation of **Generative AI (Gemini Flash)** and **Google Cloud Platform (GCP)** architecture in real-world business operations. The solution consists of two complementary systems:
 
 1. **🤖 Multi-Modal WhatsApp AI Operations Assistant (Real-Time)**: An on-demand conversational agent deployed on GCP. Non-technical staff can query databases via natural language, extract data from documents/images, and dispatch CSV/email reports directly within WhatsApp.
-2. **📊 WhatsApp Community Sentiment & NLP Pipeline (Automated Hourly Batch)**: A GitHub Actions data pipeline that pulls the last hour's WhatsApp group messages, de-duplicates and keyword-filters them, runs context-aware LLM brand-sentiment classification, and dual-writes a 48-column dataset to Google Sheets and Supabase for dashboards and negative-sentiment alerts.
+2. **📊 WhatsApp Community Sentiment & NLP Pipeline (Automated Batch)**: A GitHub Actions data pipeline, triggered manually or by an external scheduler, that pulls a time window of WhatsApp group messages (the last 65 minutes by default), de-duplicates and keyword-filters them, runs context-aware LLM brand-sentiment classification, and dual-writes a 48-column dataset to Google Sheets and Supabase for dashboards and negative-sentiment alerts.
 
 ---
 
 ## 🤖 System 1: Multi-Modal WhatsApp AI Operations Assistant
+> The System 1 source code is not included in this repository; the system is shown through the demo video and the architecture diagram below.
+
 ### 🏗️ Cloud & Agent Architecture
 ![Cloud & Agent Architecture](assets/architecture-system1.png)
 
@@ -67,7 +69,9 @@ The system has undergone end-to-end verification across operational workflows:
 
 ## 📊 System 2: WhatsApp Community Sentiment & NLP Pipeline
 
-Hourly incremental job that converts raw parenting-community WhatsApp chats into brand-level sentiment data (35 standard brand / sub-brand columns across 9 brand families + "other brands"), ready for BI dashboards and CS/PR alerting.
+Incremental batch job that converts raw parenting-community WhatsApp chats into brand-level sentiment data (35 standard brand / sub-brand columns across 9 brand families + "other brands"), ready for BI dashboards and CS/PR alerting.
+
+> **Ownership:** The data collection layer and the PostgreSQL message database were provided by the company; the rest of the application code in this repository was written by me.
 
 > **🌐 Built to be reusable across industries.** Infant formula is the real-world deployment, but the engine itself is industry-agnostic:
 > * **Rules live in a sheet, not in code:** brands, sub-brands, keywords, context words and exclusions are all maintained in Google Sheets. Monitoring a different industry (beauty, consumer electronics, F&B, insurance…) mainly means swapping the keyword sheet and updating one column mapping (`PRODUCT_SHORT_BRANDS` / `CODE_TO_COLUMN_MAP`).
@@ -91,11 +95,11 @@ The keyword rules are not tuned by hand. A separate **Keyword Agent** reviews th
 * **🧠 Context-aware sentiment:** Each candidate message is sent with its quoted message and up to 5 previous messages from the same group. The LLM returns structured JSON: spam flag, per-brand sentiment (`P` positive · `I` neutral/inquiry · `N` negative) and the original message it replies to.
 * **🛡️ Anti-hallucination guardrails:** Prompt rules and few-shot examples stop the model from guessing brands from generic ingredients (e.g. DHA, hydrolysed), from misreading education terms like "A+", or from linking pronouns to brands that never appear in context. Spam (resale, points-sharing, promo forwards) is filtered out.
 * **🧩 Contextual short-name resolution:** Short product names that are ambiguous on their own (e.g. a sub-brand name without its parent brand, `COMBO` rules) are only counted when the context confirms them: the quoted message mentions the parent brand, the parent brand appeared in the same group within the last 30 minutes, or the directly preceding message clearly talks about infant formula.
-* **🔗 Reply attribution:** When a message answers an earlier one, Python re-aligns the model's `reply_origin` to the full original text (emoji included) in the context window, producing a clean `reply` column.
+* **🔗 Reply tracing:** When a message answers an earlier one, Python re-aligns the model's `reply_origin` to the full original text (emoji included) in the context window, producing a clean `reply` column.
 * **🏷️ Brand roll-up & alert flag:** Sub-brand sentiments automatically roll up to their parent brand column (`MASTER_BRAND_ROLLUP`, N > P > I priority), a literal-match safety net marks a brand as `I` if the LLM missed a brand that was explicitly named, and a `warning` flag marks negative mentions of the core brand for CS/PR follow-up.
 * **🚦 Circuit breaker:** An AI health check runs before the batch, and the job aborts after 5 consecutive LLM failures (e.g. exhausted API credit) so no half-processed data is written.
 * **💾 Dual-write output:** A fixed 48-column schema (12 message fields + 35 brand columns + `Other_Brands`) is appended to half-month Google Sheets (`yymm_DailyData_Part1` = days 1–15, `Part2` = 16–end) with formula-injection escaping and 429 back-off retries, and bulk-inserted into a Supabase `message_full` table. Dates are normalised to `YYYY-MM-DD` with day-first parsing, so `02/10/2026` is never read as 10 February. A test-sheet mode redirects all output away from production sheets.
-* **🔁 Incremental runs & reruns:** A built-in hourly schedule (minute 5) processes the last 65 minutes (HKT, a 5-minute overlap guards against gaps), and a concurrency lock queues overlapping runs so two jobs never write at once. Reruns via the workflow's `target_date` input: a full day (`260928` or `2026-09-28`), a multi-day range (`2026-07-01 to 2026-09-30`, `260701-260930`) or a precise time range (`260928 14:00-16:00`).
+* **🔁 Incremental runs & reruns:** Runs are triggered manually or externally (there is no built-in schedule). A run without a date processes the last 65 minutes (HKT); when runs are triggered at regular intervals, the extra 5 minutes overlap guards against gaps. A concurrency lock queues overlapping runs so two jobs never write at once. Reruns via the workflow's `target_date` input: a full day (`260928` or `2026-09-28`), a multi-day range (`2026-07-01 to 2026-09-30`, `260701-260930`) or a precise time range (`260928 14:00-16:00`).
 * **🎯 Group filter:** An optional `target_group_ids` input (comma-separated) limits a run to specific WhatsApp groups, e.g. to rerun just one group's history.
 
 ### 🧰 Supporting Scripts
@@ -118,6 +122,7 @@ The keyword rules are not tuned by hand. A separate **Keyword Agent** reviews th
 | `POE_API_KEY` | ✅ | Poe API key (LLM) |
 | `DB_HOST`, `DB_NAME`, `DB_USER`, `DB_PASSWORD` | ✅ | Source PostgreSQL (WhatsApp message store) |
 | `DB_PORT` | optional | Defaults to `5432` |
+| `SOURCE_VIEW` | optional | Source view / table to read messages from (`schema.name` or `name`, letters/digits/underscore only; validated and quoted as an SQL identifier). Defaults to `public.messages_view` |
 | `KEYWORDS_SPREADSHEET_ID` or `KEYWORDS_SHEET_URL` | ✅ (one of) | Sheet with `brand_keywords` / `ift_keywords` tabs (tab names overridable via `BRAND_SHEET_NAME` / `IFT_SHEET_NAME`) |
 | `GROUPINFO_SHEET_URL` | ✅ | Sheet with `groups` tab (group ID → name) |
 | `SUPABASE_DB_HOST`, `SUPABASE_DB_USER`, `SUPABASE_DB_PASSWORD` | for Supabase | Supabase session pooler; write is skipped if host/password is empty |
@@ -125,11 +130,11 @@ The keyword rules are not tuned by hand. A separate **Keyword Agent** reviews th
 | `TEST_TARGET_SHEET_URL` | optional | If set, all output goes to this test sheet |
 | `INTERNAL_PHONES_JSON` | optional | JSON like `{"LabelA": ["9xxxxxxx"], "LabelB": [...]}` for the `Internal` column |
 
-Trigger: the built-in hourly schedule, **Actions → Hourly WhatsApp Data NLP Pipeline → Run workflow** (optional `target_date` and `target_group_ids`), or a `repository_dispatch` event of type `trigger-nlp-pipeline` from an external scheduler (`client_payload.target_date` / `client_payload.target_group_ids` are also accepted).
+Trigger (manual or external; no built-in schedule): **Actions → WhatsApp Data NLP Pipeline → Run workflow** (optional `target_date` and `target_group_ids`), or a `repository_dispatch` event of type `trigger-nlp-pipeline` from an external scheduler (`client_payload.target_date` / `client_payload.target_group_ids` are also accepted).
 
 ### 🔑 Keyword Sheet Structure
 
-The full production lists (193 brand rules across 14 brands, 263 topic / context / exclusion words in 50+ categories) stay in a private Google Sheet. A curated excerpt with the real design notes is in [`examples/`](examples/).
+The full production keyword lists stay in a private Google Sheet; [`examples/`](examples/) shows only a curated excerpt with the real design notes.
 
 **`brand_keywords` tab** – one row per detection rule:
 

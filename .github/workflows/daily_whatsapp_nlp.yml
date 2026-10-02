@@ -1,11 +1,8 @@
-name: Hourly WhatsApp Data NLP Pipeline
+name: WhatsApp Data NLP Pipeline
 
 on:
-  # 0. 內建排程：每小時第 5 分鐘自動喚醒 (增量模式)
-  schedule:
-    - cron: '5 * * * *'
-
-  # 1. 支援外部 Cron 透過 GitHub API / Webhook 喚醒，或在 GitHub 網頁手動點擊觸發
+  # 不設內建排程：只在 GitHub 網頁手動觸發，或由外部排程 / Webhook 喚醒
+  # 1. 在 GitHub 網頁手動點擊觸發，或透過 GitHub API 呼叫 workflow_dispatch
   workflow_dispatch:
     inputs:
       target_date:
@@ -64,6 +61,7 @@ jobs:
           DB_NAME: ${{ secrets.DB_NAME }}
           DB_USER: ${{ secrets.DB_USER }}
           DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          SOURCE_VIEW: ${{ secrets.SOURCE_VIEW }}
           POE_API_KEY: ${{ secrets.POE_API_KEY }}
           SUPABASE_DB_HOST: ${{ secrets.SUPABASE_DB_HOST }}
           SUPABASE_DB_PORT: ${{ secrets.SUPABASE_DB_PORT }}
@@ -73,6 +71,7 @@ jobs:
           KEYWORDS_SPREADSHEET_ID: ${{ secrets.KEYWORDS_SPREADSHEET_ID }}
           KEYWORDS_SHEET_URL: ${{ secrets.KEYWORDS_SHEET_URL }}
           BRAND_SHEET_NAME: ${{ secrets.BRAND_SHEET_NAME }}
+          IFT_SHEET_NAME: ${{ secrets.IFT_SHEET_NAME }}
           GROUPINFO_SHEET_URL: ${{ secrets.GROUPINFO_SHEET_URL }}
           TEST_TARGET_SHEET_URL: ${{ secrets.TEST_TARGET_SHEET_URL }}
           INTERNAL_PHONES_JSON: ${{ secrets.INTERNAL_PHONES_JSON }}

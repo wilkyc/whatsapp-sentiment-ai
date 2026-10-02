@@ -10,7 +10,8 @@ import re
 
 
 def _env(name, default=""):
-  return os.environ.get(name, default).strip()
+  # 空字串 (例如 GitHub Actions 中未設定的 secret) 視同未設定，回退到預設值
+  return os.environ.get(name, "").strip() or default
 
 
 def _env_int(name, default):
@@ -91,6 +92,12 @@ INTERNAL_PHONES_JSON = _env("INTERNAL_PHONES_JSON")
 INTERNAL_PHONES_FILE = _env("INTERNAL_PHONES_FILE", "internal_phones.json")
 
 # 🐘 1. 原讀取對話資料庫 (PostgreSQL, WhatsApp message store)
+# 來源 view / 表名由環境變數 SOURCE_VIEW 提供 (schema.name 或 name)；預設為中性佔位名。
+# 只接受合法識別符，並在 SQL 中以 psycopg2.sql.Identifier 引用，避免注入。
+_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)?$")
+SOURCE_VIEW = _env("SOURCE_VIEW") or "public.messages_view"
+if not _IDENT_RE.match(SOURCE_VIEW):
+  raise ValueError("SOURCE_VIEW must look like 'schema.name' or 'name' (letters, digits, underscore)")
 DB_CONFIG = {
   "host": _env("DB_HOST"),
   "port": _env_int("DB_PORT", 5432),
@@ -124,14 +131,14 @@ BRAND_MAPPING = {
 }
 
 # ==========================================
-# 🎯 特定 Group ID 過濾與回溯功能開關
+# 🎯 特定 Group ID 過濾與打標設定
 # ==========================================
 # 1. 指定 Group ID 清單 (留空為處理所有群組；若填寫則只跑指定群組，支援逗號分隔)
 # 支援環境變數傳入，例如: TARGET_GROUP_IDS="<group_id_1>@g.us,<group_id_2>@g.us"
 ENV_TARGET_GIDS = os.environ.get("TARGET_GROUP_IDS", "").strip()
 TARGET_GROUP_IDS = [gid.strip() for gid in ENV_TARGET_GIDS.split(",") if gid.strip()] if ENV_TARGET_GIDS else []
 
-# 2. 暫時關停 reply 關聯品牌開關 (目前暫時不落地，設為 False)
-# False: 只有發言自身(含Quoted)有品牌才打標；前文 reply 不過繼品牌給當前句
-# True:  允許前文回溯的 reply 關聯並打標品牌 (舊版備份邏輯)
-ENABLE_REPLY_BRAND_ATTRIBUTION = False
+# 2. 品牌打標證據範圍
+# False: 只有發言自身(含 Quoted)有品牌證據才打標
+# True:  前文上下文推斷的品牌亦可打標
+CONTEXT_ONLY_TAGGING = False

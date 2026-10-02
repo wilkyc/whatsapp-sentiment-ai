@@ -8,14 +8,16 @@
 
 ## 📌 專案總覽 (Executive Summary)
 
-本專案展示了如何將 **生成式 AI（Gemini 3.8 Flash）** 與 **Google Cloud Platform (GCP) 雲端架構** 實際落地於日常商業營運。全套解決方案包含兩大互補的核心系統：
+本專案展示了如何將 **生成式 AI（Gemini Flash）** 與 **Google Cloud Platform (GCP) 雲端架構** 實際落地於日常商業營運。全套解決方案包含兩大互補的核心系統：
 
 1. **🤖 WhatsApp 多模態 AI 營運小幫手（即時互動）**：部署於 GCP 雲端的智慧營運助理。團隊非技術同仁只需透過日常 WhatsApp 對話，即可直接以自然語言查詢資料庫、解析多格式文件與圖片，並一鍵產出實體報表或寄送 Email。
-2. **📊 WhatsApp 社群輿情與 NLP 數據管線（定時批次處理）**：以 GitHub Actions 驅動的數據管線，每小時抽取最近一小時的 WhatsApp 群組訊息，完成去重與關鍵詞篩選後，交由具上下文理解的 LLM 進行品牌情緒分類，並將 48 欄標準化數據雙軌寫入 Google Sheets 與 Supabase，供儀表板及負面輿情警報使用。
+2. **📊 WhatsApp 社群輿情與 NLP 數據管線（批次處理）**：以 GitHub Actions 驅動、可手動或由外部排程觸發的數據管線，抽取指定時段（預設為最近 65 分鐘）的 WhatsApp 群組訊息，完成去重與關鍵詞篩選後，交由具上下文理解的 LLM 進行品牌情緒分類，並將 48 欄標準化數據雙軌寫入 Google Sheets 與 Supabase，供儀表板及負面輿情警報使用。
 
 ---
 
 ## 🤖 系統一：WhatsApp 多模態 AI 營運小幫手
+> 系統一的源碼沒有收錄在本儲存庫，僅以示範影片及下方架構圖展示。
+
 ### 🏗️ 雲端與智能體架構圖 (Architecture)
 ![系統一架構圖](assets/architecture-system1-zh.png)
 
@@ -43,19 +45,19 @@ https://github.com/user-attachments/assets/2c191493-7525-4425-b3ee-d2e9db2a7130
 
 * **測試 1：多輪記憶與會話重置（Session & Reset）**
   * **測試內容：** 驗證 Cloud Firestore 的會話持久化記憶與重置指令。
-  * **實測結果：** Agent 能在多輪對話中精準記憶用戶屬性（如姓名與歷史背景），收到 `/reset` 後即時清空上下文記憶。
+  * **實測結果：** Agent 能在多輪對話中記憶用戶屬性（如用戶身份），收到 `/reset` 後即時清空上下文記憶。
 * **測試 2：資料庫唯讀查詢與結構解析（Text-to-SQL）**
-  * **測試內容：** 驗證連線池（Connection Pool）、Schema 解析與 SQL 執行。
-  * **實測結果：** 自動調用 `get_database_schema` 解析大小寫駝峰欄位，發送查詢進度提示（`🔍 正在為您執行 SQL...`）後精準輸出查詢結果。
+  * **測試內容：** 動態解析資料庫結構，並透過連線池（SQLAlchemy）執行安全的唯讀 `SELECT` 查詢。
+  * **實測結果：** 自動查詢訊息數量與時間戳，先發送即時進度提示（`🔍 正在為您執行 SQL...`），再輸出結構化結果。
 * **測試 3：巨量數據分析與實體報表發送（Big Data & Send File）**
   * **測試內容：** 驗證數據暫存 CSV、LLM 深度營運分析及 WhatsApp 傳送實體檔案。
   * **實測結果：** 系統依序呈現進度通知（`🧠 正在進行深度智能分析... ➔ 📊 正在打包並發送檔案...`），並直接在 WhatsApp 視窗回傳 `.csv` 實體檔案與文字總結。
 * **測試 4：多模態與各式文件解析（Multimodal & Documents）**
-  * **測試內容：** 驗證圖片 OCR、Word（含內嵌截圖）、PDF、Excel 解析能力。
+  * **測試內容：** 驗證圖片 OCR 及多格式文件解析（`.docx`、`.xlsx`、`.pdf`、`.pptx`）。
   * **實測結果：** 成功解析圖片與檔案內容，自動提取 Word 內嵌之流程圖/截圖交由視覺模型總結關鍵 SOP。
 * **測試 5：電子郵件自動發送與附件寄送（Email Tool）**
   * **測試內容：** 驗證 Gmail SMTP 寄信與帶附件能力。
-  * **實測結果：** 發送進度提示（`✉️ 正在整理報告內容並寄出...`），並將排版完整的 HTML 報告與實體 `data_report.csv` 附件寄送至指定信箱。
+  * **實測結果：** 發送進度提示（`✉️ 正在整理報告內容並寄出...`），並將排版完整的 HTML 報告連同生成的 `.csv` 附件寄送至指定信箱。
 * **測試 6：聯網搜尋與即時資訊（Google Web Search）**
   * **測試內容：** 驗證獨立 Grounding 搜尋客戶端是否避開工具衝突。
   * **實測結果：** 成功檢索今日國際科技新聞、即時匯率等外部資訊，並回傳結構化摘要。
@@ -67,7 +69,9 @@ https://github.com/user-attachments/assets/2c191493-7525-4425-b3ee-d2e9db2a7130
 
 ## 📊 系統二：WhatsApp 社群輿情與 NLP 數據管線
 
-每小時增量任務，將母嬰社群 WhatsApp 原始對話轉化為品牌層級的情緒數據（9 大品牌體系共 35 個標準品牌／子品牌欄位 + 其他品牌），直接供 BI 儀表板與客服／公關警報使用。
+增量批次任務，將母嬰社群 WhatsApp 原始對話轉化為品牌層級的情緒數據（9 大品牌體系共 35 個標準品牌／子品牌欄位 + 其他品牌），直接供 BI 儀表板與客服／公關警報使用。
+
+> **歸屬說明：** 數據採集層與 PostgreSQL 訊息庫由公司提供；本儲存庫其餘應用代碼均由本人編寫。
 
 > **🌐 可跨行業通用的設計。** 奶粉是實際落地的案例，但引擎本身不限行業：
 > * **規則放在表格，不寫死在代碼：** 品牌、子品牌、關鍵詞、語境詞與排除詞均在 Google Sheets 維護。要監控其他行業（美妝、3C、餐飲、保險等），主要只需更換關鍵詞表，並調整一處欄位對應（`PRODUCT_SHORT_BRANDS` / `CODE_TO_COLUMN_MAP`）。
@@ -95,7 +99,7 @@ https://github.com/user-attachments/assets/2c191493-7525-4425-b3ee-d2e9db2a7130
 * **🏷️ 品牌歸併與警示：** 子品牌情緒依 N > P > I 優先順序自動歸併至母品牌欄位（`MASTER_BRAND_ROLLUP`）；若訊息明確寫出品牌但 AI 漏標，會以字面匹配保底標記為 `I`；核心品牌出現負面評價時於 `warning` 欄標記，方便客服／公關跟進。
 * **🚦 熔斷保護：** 批次開始前先檢測 AI 服務狀態，運行中連續 5 次 LLM 失敗（如 API 額度耗盡）即中止任務，避免寫入半成品數據。
 * **💾 雙軌寫入：** 固定 48 欄格式（12 個訊息欄位 + 35 個品牌欄位 + `Other_Brands`），按半月分表寫入 Google Sheets（`yymm_DailyData_Part1` = 1–15 日，`Part2` = 16 日至月底），內建公式注入防護與 429 限流指數退避重試；同時批次寫入 Supabase `message_full` 表。日期一律以「日優先」解析並統一為 `YYYY-MM-DD`，`02/10/2026` 不會被誤讀為 2 月 10 日。另設測試表模式，避免污染正式數據。
-* **🔁 增量運行與重跑：** 內建每小時排程（第 5 分鐘）處理香港時間最近 65 分鐘的訊息（多 5 分鐘重疊防漏），並以並發鎖排隊，確保兩個任務不會同時寫入。可於 Workflow 表單輸入 `target_date` 重跑：單日（`260928` 或 `2026-09-28`）、跨日範圍（`2026-07-01 to 2026-09-30`、`260701-260930`）或精確時段（`260928 14:00-16:00`）。
+* **🔁 增量運行與重跑：** 可手動或由外部觸發（不設內建排程）。未指定日期時處理香港時間最近 65 分鐘的訊息；按固定間隔觸發時，多出的 5 分鐘重疊可防漏。並以並發鎖排隊，確保兩個任務不會同時寫入。可於 Workflow 表單輸入 `target_date` 重跑：單日（`260928` 或 `2026-09-28`）、跨日範圍（`2026-07-01 to 2026-09-30`、`260701-260930`）或精確時段（`260928 14:00-16:00`）。
 * **🎯 指定群組：** 可選填 `target_group_ids`（逗號分隔），只處理指定的 WhatsApp 群組，例如單獨重跑某個群組的歷史數據。
 
 ### 🧰 配套腳本
@@ -118,6 +122,7 @@ https://github.com/user-attachments/assets/2c191493-7525-4425-b3ee-d2e9db2a7130
 | `POE_API_KEY` | ✅ | Poe API 金鑰（LLM） |
 | `DB_HOST`、`DB_NAME`、`DB_USER`、`DB_PASSWORD` | ✅ | 來源 PostgreSQL（WhatsApp 訊息庫） |
 | `DB_PORT` | 選填 | 預設 `5432` |
+| `SOURCE_VIEW` | 選填 | 讀取訊息的來源 view／表名（`schema.name` 或 `name`，只限字母、數字、底線；會做格式驗證並以 SQL 識別符引用），預設 `public.messages_view` |
 | `KEYWORDS_SPREADSHEET_ID` 或 `KEYWORDS_SHEET_URL` | ✅（二選一） | 含 `brand_keywords` / `ift_keywords` 分頁的關鍵詞表（分頁名可用 `BRAND_SHEET_NAME` / `IFT_SHEET_NAME` 覆蓋） |
 | `GROUPINFO_SHEET_URL` | ✅ | 含 `groups` 分頁的試算表（群組 ID → 名稱） |
 | `SUPABASE_DB_HOST`、`SUPABASE_DB_USER`、`SUPABASE_DB_PASSWORD` | 寫入 Supabase 時 | Supabase Session Pooler；host 或密碼為空時自動略過 |
@@ -125,11 +130,11 @@ https://github.com/user-attachments/assets/2c191493-7525-4425-b3ee-d2e9db2a7130
 | `TEST_TARGET_SHEET_URL` | 選填 | 設定後所有輸出只寫入此測試表 |
 | `INTERNAL_PHONES_JSON` | 選填 | 格式如 `{"LabelA": ["9xxxxxxx"], "LabelB": [...]}`，用於 `Internal` 欄位 |
 
-觸發方式：內建每小時排程、**Actions → Hourly WhatsApp Data NLP Pipeline → Run workflow**（可選填 `target_date` 及 `target_group_ids`），或由外部排程發送 `trigger-nlp-pipeline` 類型的 `repository_dispatch` 事件（亦接受 `client_payload.target_date` / `client_payload.target_group_ids`）。
+觸發方式（手動或外部觸發，不設內建排程）：**Actions → WhatsApp Data NLP Pipeline → Run workflow**（可選填 `target_date` 及 `target_group_ids`），或由外部排程發送 `trigger-nlp-pipeline` 類型的 `repository_dispatch` 事件（亦接受 `client_payload.target_date` / `client_payload.target_group_ids`）。
 
 ### 🔑 關鍵詞表結構
 
-完整正式詞庫（14 個品牌共 193 條品牌規則，以及 50 多個類別共 263 個話題／語境／排除詞）保存在私有 Google Sheet；[`examples/`](examples/) 內為附真實設計備註的精選節錄。
+完整正式詞庫保存在私有 Google Sheet；[`examples/`](examples/) 只展示附真實設計備註的精選節錄。
 
 **`brand_keywords` 分頁**：每行一條識別規則。
 
@@ -168,7 +173,7 @@ https://github.com/user-attachments/assets/2c191493-7525-4425-b3ee-d2e9db2a7130
 * **AI 與多模態模型：** Google Vertex AI (Gemini Flash)、Poe API（OpenAI 相容介面，`gemini-3.1-flash-lite`）、MarkItDown、Python-docx 文件多模態解析、提示詞工程 (Prompt Engineering)
 * **雲端與無伺服器架構：** Google Cloud Platform (Cloud Functions、Cloud Run、Cloud Pub/Sub 事件驅動、Secret Manager 密鑰管理、Cloud Firestore 狀態儲存)
 * **資料庫與數據處理：** PostgreSQL、Supabase、psycopg2、SQLAlchemy（連線池管理）、Pandas、正則表達式
-* **自動化流程與 API 串接：** Evolution API (WhatsApp 通道)、Google Workspace APIs (Sheets & Drive)、Gmail SMTP 郵件引擎、GitHub Actions 定時排程
+* **自動化流程與 API 串接：** Evolution API (WhatsApp 通道)、Google Workspace APIs (Sheets & Drive)、Gmail SMTP 郵件引擎、GitHub Actions 工作流程
 
 ---
 
