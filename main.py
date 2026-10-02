@@ -13,6 +13,8 @@ from config import (
   FINAL_HEADERS_48,
   ENABLE_CONTEXTUAL_ALIAS,
   CONTEXT_HISTORY_MAX_MINUTES,
+  TARGET_GROUP_IDS,
+  ENABLE_REPLY_BRAND_ATTRIBUTION,
   KEYWORDS_SPREADSHEET_ID,
   BRAND_SHEET_NAME,
   IFT_SHEET_NAME,
@@ -113,6 +115,18 @@ def print_stage_dashboard(stage_name, metrics):
   print("=" * 55 + "\n")
 
 
+# ==========================================
+# 🔐 2. 授權 Google API
+# ==========================================
+print("🔐 正在使用服務帳戶授權 Google Sheets API...")
+try:
+  gc, _, _ = get_google_clients()
+  print("✅ Google Sheets 服務帳戶授權成功！")
+except Exception as e:
+  print("❌ 授權失敗:", str(e))
+  sys.exit(1)
+
+
 _missing_cfg = [name for name, val in [
   ("KEYWORDS_SPREADSHEET_ID / KEYWORDS_SHEET_URL", KEYWORDS_SPREADSHEET_ID),
   ("GROUPINFO_SHEET_URL", GROUPINFO_SHEET_URL),
@@ -127,21 +141,9 @@ if _missing_cfg:
 
 
 # ==========================================
-# 🔐 2. 授權 Google API
-# ==========================================
-print("🔐 正在使用服務帳戶授權 Google Sheets API...")
-try:
-  gc, _, _ = get_google_clients()
-  print("✅ Google Sheets 服務帳戶授權成功！")
-except Exception as e:
-  print("❌ 授權失敗:", str(e))
-  sys.exit(1)
-
-
-# ==========================================
 # 🌐 3. 動態元數據編譯器與詞庫健康自檢
 # ==========================================
-print("\n🌐 正在從指定 Google Sheet 讀取雙配置檔 (brand_keywords test & ift_keywords)...")
+print("\n🌐 正在從指定 Google Sheet 讀取雙配置檔 (brand_keywords & ift_keywords)...")
 try:
   sh_obj = gc.open_by_key(KEYWORDS_SPREADSHEET_ID)
    
@@ -299,10 +301,24 @@ now_hk = datetime.now(hk_tz)
 sql_where_clause = ""
 sql_params = ()
 
+def parse_any_date(date_text):
+  date_text = date_text.strip()
+  for fmt in ["%Y-%m-%d", "%d/%m/%Y", "%y%m%d", "%Y%m%d", "%d-%m-%Y"]:
+    try:
+      return datetime.strptime(date_text, fmt)
+    except ValueError:
+      pass
+  return None
+
 if ENV_MANUAL_INPUT:
   print("\n🐘 檢測到手動輸入參數: [%s]" % ENV_MANUAL_INPUT)
+  
+  # 模式 1：精確時段 (例 "260928 14:00-16:00")
   time_range_match = re.search(r"^(\d{6}|\d{8}|\d{4}-\d{2}-\d{2})\s+(\d{1,2}:\d{2}(?::\d{2})?)-(\d{1,2}:\d{2}(?::\d{2})?)$", ENV_MANUAL_INPUT)
-   
+  
+  # 模式 2：跨天/跨月範圍 (例 "2026-07-01 to 2026-09-30" 或 "260701-260930" 或 "01/07/2026-30/09/2026")
+  date_span_match = re.search(r"^(.*?)(?:\s*(?:to|至|-|~)\s*)([0-9/.\-]+)$", ENV_MANUAL_INPUT, re.IGNORECASE)
+
   if time_range_match:
     raw_d = time_range_match.group(1).strip()
     t_start = time_range_match.group(2).strip()
@@ -310,19 +326,12 @@ if ENV_MANUAL_INPUT:
     if len(t_start.split(":")) == 2: t_start += ":00"
     if len(t_end.split(":")) == 2: t_end += ":59"
 
-    parsed_dt = None
-    for fmt in ["%y%m%d", "%Y-%m-%d", "%Y%m%d", "%d/%m/%Y"]:
-      try:
-        parsed_dt = datetime.strptime(raw_d, fmt)
-        break
-      except ValueError:
-        pass
-     
+    parsed_dt = parse_any_date(raw_d)
     d_candidates = [raw_d]
     if parsed_dt:
       d_candidates.extend([
         parsed_dt.strftime("%d/%m/%Y"),
-        "%d/%d/%04d" % (parsed_dt.day, parsed_dt.month, parsed_dt.year),
+        f"{parsed_dt.day}/{parsed_dt.month}/{parsed_dt.year}",
         parsed_dt.strftime("%Y-%m-%d")
       ])
     d_candidates = list(dict.fromkeys(d_candidates))
@@ -332,24 +341,42 @@ if ENV_MANUAL_INPUT:
     print("  ⏰ 時間區間: %s ~ %s" % (t_start, t_end))
     sql_where_clause = "sentdate = ANY(%s) AND senttime >= %s AND senttime <= %s"
     sql_params = (d_candidates, t_start, t_end)
+
+  elif date_span_match and parse_any_date(date_span_match.group(1)) and parse_any_date(date_span_match.group(2)):
+    dt_start = parse_any_date(date_span_match.group(1))
+    dt_end = parse_any_date(date_span_match.group(2))
+    
+    if dt_start > dt_end:
+      dt_start, dt_end = dt_end, dt_start
+
+    print(f"🎯 【跨日期長範圍批次模式】: {dt_start.strftime('%Y-%m-%d')} 至 {dt_end.strftime('%Y-%m-%d')}")
+    d_candidates = []
+    curr = dt_start
+    while curr <= dt_end:
+      d_candidates.extend([
+        curr.strftime("%d/%m/%Y"),
+        f"{curr.day}/{curr.month}/{curr.year}",
+        curr.strftime("%Y-%m-%d")
+      ])
+      curr += timedelta(days=1)
+    d_candidates = list(dict.fromkeys(d_candidates))
+    print(f"  📅 已動態生成 {len(d_candidates)} 個日期字串候選索引！")
+    sql_where_clause = "sentdate = ANY(%s)"
+    sql_params = (d_candidates,)
+
   else:
+    # 模式 3：單日全天
     raw_d = ENV_MANUAL_INPUT.strip()
-    parsed_dt = None
-    for fmt in ["%y%m%d", "%Y-%m-%d", "%Y%m%d", "%d/%m/%Y"]:
-      try:
-        parsed_dt = datetime.strptime(raw_d, fmt)
-        break
-      except ValueError:
-        pass
+    parsed_dt = parse_any_date(raw_d)
     d_candidates = [raw_d]
     if parsed_dt:
       d_candidates.extend([
         parsed_dt.strftime("%d/%m/%Y"),
-        "%d/%d/%04d" % (parsed_dt.day, parsed_dt.month, parsed_dt.year),
+        f"{parsed_dt.day}/{parsed_dt.month}/{parsed_dt.year}",
         parsed_dt.strftime("%Y-%m-%d")
       ])
     d_candidates = list(dict.fromkeys(d_candidates))
-    print("🎯 【全天批次重跑模式】:")
+    print("🎯 【單日全天批次重跑模式】:")
     print("  📅 目標全天:", d_candidates)
     sql_where_clause = "sentdate = ANY(%s)"
     sql_params = (d_candidates,)
@@ -373,6 +400,13 @@ else:
     sql_where_clause = "((sentdate = %s AND senttime >= %s) OR (sentdate = %s AND senttime <= %s))"
     sql_params = (distinct_dates[0], start_time_str, distinct_dates[1], end_time_str)
 
+# 🎯 需求一：若配置了指定 TARGET_GROUP_IDS，動態追加 GroupID 門禁
+gid_where_clause = ""
+if TARGET_GROUP_IDS:
+  gid_where_clause = " AND gusid = ANY(%s)"
+  sql_params = sql_params + (TARGET_GROUP_IDS,)
+  print("🎯 【指定群組過濾啟用】僅查詢目標 Group IDs:", TARGET_GROUP_IDS)
+
 raw_db_rows = []
 try:
   conn = psycopg2.connect(**DB_CONFIG)
@@ -388,7 +422,7 @@ try:
         mediacaption,
         quotedmessage
       FROM public.messageview
-      WHERE {sql_where_clause}
+      WHERE {sql_where_clause} {gid_where_clause}
        AND messagebody IS NOT NULL 
        AND TRIM(messagebody) != ''
        AND messagebody != '[empty]'
@@ -434,18 +468,32 @@ def extract_unique_kws_longest_match(text, target_kws, occupied_mask):
     return []
   matched = []
   text_lower = text.lower()
+  
   for kw in target_kws:
     kw_l = kw.lower()
+    # 判斷是否為純英文/字母縮寫 (如 OPO, RTF, HMO)
+    is_pure_ascii = kw.isascii() and kw.isalpha()
     start = 0
+    
     while True:
       idx = text_lower.find(kw_l, start)
       if idx == -1:
         break
       end = idx + len(kw_l)
-      if not any(occupied_mask[idx:end]):
+      
+      # 💡 ASCII 字母邊界保護：純英文詞前後不能緊接 [A-Za-z] (通殺 popo 誤中 OPO、portfolio 誤中 RTF)
+      boundary_ok = True
+      if is_pure_ascii:
+        has_left_alpha = (idx > 0) and ('a' <= text[idx - 1].lower() <= 'z')
+        has_right_alpha = (end < len(text)) and ('a' <= text[end].lower() <= 'z')
+        if has_left_alpha or has_right_alpha:
+          boundary_ok = False
+
+      if boundary_ok and not any(occupied_mask[idx:end]):
         matched.append(kw)
         for i in range(idx, end):
           occupied_mask[i] = True
+          
       start = idx + 1
   return matched
 
@@ -1093,8 +1141,12 @@ if total_ai_tasks > 0:
               elif "ascenda" in raw_b_name.lower(): resolved_col = "Wyeth Ascenda"
               else: resolved_col = "Wyeth"
 
-            # ── 寫入判定 ──
-            if resolved_col and resolved_col in STANDARD_BRANDS:
+            # ── 寫入判定 (受 ENABLE_REPLY_BRAND_ATTRIBUTION 門禁保護) ──
+            # 💡 需求二：若功能關閉，當前句自己或 Quoted 必須有明確品牌證據；絕不允許純前文 reply 關聯打標！
+            has_self_evidence = bool(record["direct_brand_evidence"] or record["quoted_brand_evidence"])
+            allow_attribution = ENABLE_REPLY_BRAND_ATTRIBUTION or has_self_evidence
+
+            if resolved_col and resolved_col in STANDARD_BRANDS and allow_attribution:
               record[resolved_col] = s_val
               standard_brand_hit = True
 
@@ -1102,8 +1154,8 @@ if total_ai_tasks > 0:
                 if resolved_col in sub_list or resolved_col == p_brand:
                   parent_rollup_collector[p_brand].append(s_val)
 
-            elif raw_b_name:
-              # 只有既不在標準庫、也無法從證據對齊的真正次要競品 (如 Kendamil, A2, Meiji) 才進 Other_Brands
+            elif raw_b_name and allow_attribution:
+              # 只有真正次要競品才進 Other_Brands
               other_brands_collected.append(raw_b_name + "(" + s_val + ")")
 
           # 💡 硬事實字面保底機制 (Hard Fact Guarantee)
@@ -1165,6 +1217,28 @@ if total_ai_tasks > 0:
 print("\n💾 正在整理資料並準備執行雙軌寫入 (48 欄位標準格式)...")
 final_df = pd.DataFrame(cleaned_records)
 
+def parse_hk_date_to_iso(date_str):
+  """
+  嚴格將香港常見的 DD/MM/YYYY 或其他格式安全轉換為 ISO 8601 (YYYY-MM-DD)
+  徹底消除 02/10/2026 被誤認為 2月10日的倒置 Bug！
+  """
+  if not date_str:
+    return None
+  d_str = str(date_str).strip()
+  
+  # 優先按香港常用 DD/MM/YYYY 或 DD-MM-YYYY 解析
+  for fmt in ["%d/%m/%Y", "%d-%m-%Y", "%d/%m/%y", "%Y-%m-%d", "%Y/%m/%d"]:
+    try:
+      return datetime.strptime(d_str, fmt).strftime("%Y-%m-%d")
+    except ValueError:
+      pass
+  
+  # 若未精確匹配，使用 dayfirst=True 強制日優先解析
+  dt = pd.to_datetime(d_str, dayfirst=True, errors="coerce")
+  if pd.notna(dt):
+    return dt.strftime("%Y-%m-%d")
+  return d_str
+
 def escape_sheet_formula(val):
   if not isinstance(val, str):
     return val
@@ -1175,7 +1249,8 @@ def escape_sheet_formula(val):
 
 def get_target_sheet_name(date_str):
   try:
-    dt = pd.to_datetime(date_str)
+    iso_date = parse_hk_date_to_iso(date_str)
+    dt = pd.to_datetime(iso_date)
     yy = dt.strftime("%y")
     mm = dt.strftime("%m")
     dd = dt.day
@@ -1196,6 +1271,8 @@ if not final_df.empty:
 
   # ── 7.1 寫入 Google Sheets ──
   sheets_df = full_48_df.copy()
+  # 💡 強制統一為 YYYY-MM-DD，Google Sheets 100% 識別為日期，且永不混淆月份與日！
+  sheets_df["Date"] = sheets_df["Date"].apply(parse_hk_date_to_iso)
   for text_col in ["messageBody", "quotedMessage", "reply"]:
     sheets_df[text_col] = sheets_df[text_col].apply(escape_sheet_formula)
 
@@ -1259,8 +1336,7 @@ if not final_df.empty:
       insert_rows = []
       for _, r in full_48_df.iterrows():
         d_val = str(r["Date"]).strip()
-        d_parsed = pd.to_datetime(d_val, errors="coerce")
-        date_str = d_parsed.strftime("%Y-%m-%d") if pd.notna(d_parsed) else None
+        date_str = parse_hk_date_to_iso(d_val)
 
         t_val = str(r["Time"]).strip()
         time_str = t_val if re.match(r"^\d{1,2}:\d{2}(:\d{2})?$", t_val) else None
