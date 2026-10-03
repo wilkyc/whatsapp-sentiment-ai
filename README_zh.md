@@ -11,7 +11,7 @@
 本專案展示了如何將 **生成式 AI（系統一：Gemini 3.8 Flash；系統二：`gemini-3.1-flash-lite`）** 與 **Google Cloud Platform (GCP) 雲端架構** 實際落地於日常商業營運。全套解決方案包含兩大互補的核心系統：
 
 1. **🤖 WhatsApp 多模態 AI 營運小幫手（即時互動）**：部署於 GCP 雲端的智慧營運助理。團隊非技術同仁只需透過日常 WhatsApp 對話，即可直接以自然語言查詢資料庫、解析多格式文件與圖片，並一鍵產出實體報表或寄送 Email。
-2. **📊 WhatsApp 社群輿情與 NLP 數據管線（批次處理）**：以 GitHub Actions 驅動、可手動或由外部排程觸發的數據管線，抽取指定時段（預設為最近 65 分鐘）的 WhatsApp 群組訊息，完成去重與關鍵詞篩選後，交由具上下文理解的 LLM 進行品牌情緒分類，並將 48 欄標準化數據雙軌寫入 Google Sheets 與 Supabase，供儀表板及負面輿情警報使用。
+2. **📊 WhatsApp 社群輿情與 NLP 數據管線（批次處理）**：以 GitHub Actions 驅動的數據管線（生產環境每小時觸發；公開版改為手動／外部觸發），抽取指定時段（預設為最近 65 分鐘）的 WhatsApp 群組訊息，完成去重與關鍵詞篩選後，交由具上下文理解的 LLM 進行品牌情緒分類，並將 48 欄標準化數據雙軌寫入 Google Sheets 與 Supabase，供儀表板及負面輿情警報使用。
 
 ---
 
@@ -99,7 +99,7 @@ https://github.com/user-attachments/assets/2c191493-7525-4425-b3ee-d2e9db2a7130
 * **🏷️ 品牌歸併與警示：** 子品牌情緒依 N > P > I 優先順序自動歸併至母品牌欄位（`MASTER_BRAND_ROLLUP`）；若訊息明確寫出品牌但 AI 漏標，會以字面匹配保底標記為 `I`；核心品牌出現負面評價時於 `warning` 欄標記，方便客服／公關跟進。
 * **🚦 熔斷保護：** 批次開始前先檢測 AI 服務狀態，運行中連續 5 次 LLM 失敗（如 API 額度耗盡）即中止任務，避免寫入半成品數據。
 * **💾 雙軌寫入：** 固定 48 欄格式（12 個訊息欄位 + 35 個品牌欄位 + `Other_Brands`），按半月分表寫入 Google Sheets（`yymm_DailyData_Part1` = 1–15 日，`Part2` = 16 日至月底），內建公式注入防護與 429 限流指數退避重試；同時批次寫入 Supabase `message_full` 表。日期一律以「日優先」解析並統一為 `YYYY-MM-DD`，`02/10/2026` 不會被誤讀為 2 月 10 日。另設測試表模式，避免污染正式數據。
-* **🔁 增量運行與重跑：** 可手動或由外部觸發（不設內建排程）。未指定日期時處理香港時間最近 65 分鐘的訊息；按固定間隔觸發時，多出的 5 分鐘重疊可防漏。並以並發鎖排隊，確保兩個任務不會同時寫入。可於 Workflow 表單輸入 `target_date` 重跑：單日（`260928` 或 `2026-09-28`）、跨日範圍（`2026-07-01 to 2026-09-30`、`260701-260930`）或精確時段（`260928 14:00-16:00`）。
+* **🔁 增量運行與重跑：** 生產環境每小時觸發；公開版改為手動／外部觸發（不設內建排程）。未指定日期時處理香港時間最近 65 分鐘的訊息，每小時運行時多出的 5 分鐘重疊可防漏。並以並發鎖排隊，確保兩個任務不會同時寫入。可於 Workflow 表單輸入 `target_date` 重跑：單日（`260928` 或 `2026-09-28`）、跨日範圍（`2026-07-01 to 2026-09-30`、`260701-260930`）或精確時段（`260928 14:00-16:00`）。
 * **🎯 指定群組：** 可選填 `target_group_ids`（逗號分隔），只處理指定的 WhatsApp 群組，例如單獨重跑某個群組的歷史數據。
 
 ### 🧰 配套腳本
@@ -130,7 +130,7 @@ https://github.com/user-attachments/assets/2c191493-7525-4425-b3ee-d2e9db2a7130
 | `TEST_TARGET_SHEET_URL` | 選填 | 設定後所有輸出只寫入此測試表 |
 | `INTERNAL_PHONES_JSON` | 選填 | 格式如 `{"LabelA": ["9xxxxxxx"], "LabelB": [...]}`，用於 `Internal` 欄位 |
 
-觸發方式（手動或外部觸發，不設內建排程）：**Actions → WhatsApp Data NLP Pipeline → Run workflow**（可選填 `target_date` 及 `target_group_ids`），或由外部排程發送 `trigger-nlp-pipeline` 類型的 `repository_dispatch` 事件（亦接受 `client_payload.target_date` / `client_payload.target_group_ids`）。
+觸發方式（生產環境每小時觸發；公開版改為手動／外部觸發，不設內建排程）：**Actions → WhatsApp Data NLP Pipeline → Run workflow**（可選填 `target_date` 及 `target_group_ids`），或由外部排程發送 `trigger-nlp-pipeline` 類型的 `repository_dispatch` 事件（亦接受 `client_payload.target_date` / `client_payload.target_group_ids`）。
 
 ### 🔑 關鍵詞表結構
 
