@@ -44,7 +44,7 @@ import requests
 # ==========================================
 ENV_MANUAL_INPUT = os.environ.get("MANUAL_DATE", "").strip()
 
-HOURLY_WINDOW_MINUTES = 65
+INCREMENTAL_WINDOW_MINUTES = 65
 CONTEXT_HISTORY_LIMIT = 5
 TIME_TOLERANCE_SECONDS = 60
 
@@ -383,7 +383,7 @@ if ENV_MANUAL_INPUT:
     sql_where_clause = "sentdate = ANY(%s)"
     sql_params = (d_candidates,)
 else:
-  start_time_hk = now_hk - timedelta(minutes=HOURLY_WINDOW_MINUTES)
+  start_time_hk = now_hk - timedelta(minutes=INCREMENTAL_WINDOW_MINUTES)
   distinct_dates = list(set([
     start_time_hk.strftime("%d/%m/%Y"),
     now_hk.strftime("%d/%m/%Y")
@@ -391,9 +391,9 @@ else:
   start_time_str = start_time_hk.strftime("%H:%M:%S")
   end_time_str = now_hk.strftime("%H:%M:%S")
 
-  print("\n🐘 啟動【每小時增量模式】 (香港時區):")
+  print("\n🐘 啟動【增量模式（最近 %d 分鐘）】 (香港時區):" % INCREMENTAL_WINDOW_MINUTES)
   print("  📅 目標日期:", distinct_dates)
-  print("  ⏰ 時間窗口: %s ~ %s (前 %d 分鐘)" % (start_time_str, end_time_str, HOURLY_WINDOW_MINUTES))
+  print("  ⏰ 時間窗口: %s ~ %s (前 %d 分鐘)" % (start_time_str, end_time_str, INCREMENTAL_WINDOW_MINUTES))
 
   if len(distinct_dates) == 1:
     sql_where_clause = "sentdate = %s AND senttime >= %s AND senttime <= %s"

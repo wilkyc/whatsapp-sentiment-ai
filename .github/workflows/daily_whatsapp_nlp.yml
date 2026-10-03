@@ -15,7 +15,7 @@ on:
 
 # 💡 並發保護：若上一個任務因處理量大仍在運行，新觸發的任務會自動排隊等待，絕不並行同時寫入！
 concurrency:
-  group: hourly-whatsapp-pipeline
+  group: whatsapp-nlp-pipeline
   cancel-in-progress: false
 
 jobs:
