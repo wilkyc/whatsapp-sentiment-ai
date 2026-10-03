@@ -14,7 +14,7 @@ from config import (
   ENABLE_CONTEXTUAL_ALIAS,
   CONTEXT_HISTORY_MAX_MINUTES,
   TARGET_GROUP_IDS,
-  ENABLE_REPLY_BRAND_ATTRIBUTION,
+  CONTEXT_ONLY_TAGGING,
   KEYWORDS_SPREADSHEET_ID,
   BRAND_SHEET_NAME,
   IFT_SHEET_NAME,
@@ -23,6 +23,7 @@ from config import (
   TEST_TARGET_SHEET_URL,
   TEST_WORKSHEET_TAB,
   DB_CONFIG,
+  SOURCE_VIEW,
   SUPABASE_DB_CONFIG,
   SUPABASE_FULL_TABLE,
   INTERNAL_PHONES_JSON,
@@ -33,6 +34,7 @@ import gspread
 import openai
 import pandas as pd
 import psycopg2
+from psycopg2 import sql
 from psycopg2.extras import RealDictCursor, execute_values
 import pytz
 import requests
@@ -400,7 +402,7 @@ else:
     sql_where_clause = "((sentdate = %s AND senttime >= %s) OR (sentdate = %s AND senttime <= %s))"
     sql_params = (distinct_dates[0], start_time_str, distinct_dates[1], end_time_str)
 
-# 🎯 需求一：若配置了指定 TARGET_GROUP_IDS，動態追加 GroupID 門禁
+# 🎯 若配置了指定 TARGET_GROUP_IDS，動態追加 GroupID 門禁
 gid_where_clause = ""
 if TARGET_GROUP_IDS:
   gid_where_clause = " AND gusid = ANY(%s)"
@@ -411,7 +413,8 @@ raw_db_rows = []
 try:
   conn = psycopg2.connect(**DB_CONFIG)
   with conn.cursor(cursor_factory=RealDictCursor) as cur:
-    query = f"""
+    # 來源 view 名以 sql.Identifier 引用 (config.py 已做白名單驗證)；WHERE 子句為代碼內固定片段，值一律走參數
+    query = sql.SQL("""
       SELECT 
         groupname,
         gusid,
@@ -421,13 +424,17 @@ try:
         messagebody,
         mediacaption,
         quotedmessage
-      FROM public.messageview
-      WHERE {sql_where_clause} {gid_where_clause}
+      FROM {source_view}
+      WHERE {where_clause} {gid_clause}
        AND messagebody IS NOT NULL 
        AND TRIM(messagebody) != ''
        AND messagebody != '[empty]'
       ORDER BY gusid, sentdate, senttime ASC;
-    """
+    """).format(
+      source_view=sql.Identifier(*SOURCE_VIEW.split(".")),
+      where_clause=sql.SQL(sql_where_clause),
+      gid_clause=sql.SQL(gid_where_clause),
+    )
     cur.execute(query, sql_params)
     raw_db_rows = cur.fetchall()
   conn.close()
@@ -1141,12 +1148,12 @@ if total_ai_tasks > 0:
               elif "ascenda" in raw_b_name.lower(): resolved_col = "Wyeth Ascenda"
               else: resolved_col = "Wyeth"
 
-            # ── 寫入判定 (受 ENABLE_REPLY_BRAND_ATTRIBUTION 門禁保護) ──
-            # 💡 需求二：若功能關閉，當前句自己或 Quoted 必須有明確品牌證據；絕不允許純前文 reply 關聯打標！
+            # ── 寫入判定 ──
+            # 💡 預設要求當前句自己或 Quoted 有明確品牌證據才打標
             has_self_evidence = bool(record["direct_brand_evidence"] or record["quoted_brand_evidence"])
-            allow_attribution = ENABLE_REPLY_BRAND_ATTRIBUTION or has_self_evidence
+            allow_tag = CONTEXT_ONLY_TAGGING or has_self_evidence
 
-            if resolved_col and resolved_col in STANDARD_BRANDS and allow_attribution:
+            if resolved_col and resolved_col in STANDARD_BRANDS and allow_tag:
               record[resolved_col] = s_val
               standard_brand_hit = True
 
@@ -1154,7 +1161,7 @@ if total_ai_tasks > 0:
                 if resolved_col in sub_list or resolved_col == p_brand:
                   parent_rollup_collector[p_brand].append(s_val)
 
-            elif raw_b_name and allow_attribution:
+            elif raw_b_name and allow_tag:
               # 只有真正次要競品才進 Other_Brands
               other_brands_collected.append(raw_b_name + "(" + s_val + ")")
 
