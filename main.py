@@ -474,6 +474,21 @@ except Exception as e:
 # ==========================================
 # 🧹 5. 層級匹配與前置去重
 # ==========================================
+def to_epoch_int(val):
+  """把 epoch 時間戳 (int / 數字字串) 轉成 int；無法轉換時回傳 None (寫入 NULL)。"""
+  if val is None or isinstance(val, bool):
+    return None
+  if isinstance(val, int):
+    return val
+  if isinstance(val, float):
+    return int(val) if val == val else None
+  txt = str(val).strip()
+  if re.fullmatch(r"-?\d+", txt):
+    return int(txt)
+  if re.fullmatch(r"-?\d+\.\d+", txt):
+    return int(float(txt))
+  return None
+
 def is_whatsapp_lid(phone_raw):
   """識別 WhatsApp 設備 LID (非真實電話號碼)。回傳 (is_lid, 純數字)。"""
   if not phone_raw or str(phone_raw).lower() in ["nan", "none", "null", ""]:
@@ -778,16 +793,16 @@ for row in raw_db_rows:
           if raw_mid:
             deduped_records_dict[old_key]["message_id"] = raw_mid
           if inst_id:
-            deduped_records_dict[old_key]["instanceId"] = inst_id
+            deduped_records_dict[old_key]["instance_id"] = inst_id
           if raw_ts:
             deduped_records_dict[old_key]["raw_timestamp"] = raw_ts
           if msg_type:
-            deduped_records_dict[old_key]["messageType"] = msg_type
+            deduped_records_dict[old_key]["message_type"] = msg_type
           if raw_caption:
-            deduped_records_dict[old_key]["mediaCaption"] = raw_caption
+            deduped_records_dict[old_key]["media_caption"] = raw_caption
 
-        if sender_lid and not deduped_records_dict[old_key].get("senderLid"):
-          deduped_records_dict[old_key]["senderLid"] = sender_lid
+        if sender_lid and not deduped_records_dict[old_key].get("sender_lid"):
+          deduped_records_dict[old_key]["sender_lid"] = sender_lid
 
         if internal_flag and not deduped_records_dict[old_key]["Internal"]:
           deduped_records_dict[old_key]["Internal"] = internal_flag
@@ -807,11 +822,11 @@ for row in raw_db_rows:
 
     record = {
       "message_id": raw_mid,
-      "instanceId": inst_id,
+      "instance_id": inst_id,
       "raw_timestamp": raw_ts,
-      "messageType": msg_type,
-      "mediaCaption": raw_caption,
-      "senderLid": sender_lid,
+      "message_type": msg_type,
+      "media_caption": raw_caption,
+      "sender_lid": sender_lid,
 
       "Group": group_name,
       "GroupID": group_id_val,
@@ -1485,7 +1500,7 @@ if not final_df.empty:
     try:
       # 需要 message_id 有 UNIQUE 約束，重複訊息以 ON CONFLICT DO NOTHING 略過
       db_cols = [
-        'message_id', '"instanceId"', '"raw_timestamp"', '"messageType"', '"mediaCaption"', '"senderLid"',
+        'message_id', 'instance_id', 'raw_timestamp', 'message_type', 'media_caption', 'sender_lid',
         '"Group"', '"GroupID"', '"Date"', '"Time"', '"userPhone"', '"Internal"',
         '"quotedMessage"', '"messageBody"', '"reply"', '"brand"', '"keywords"', '"warning"',
         '"Abbott"', '"Similac HMO"', '"Similac Comfort"', '"Abbott PediaSure"',
@@ -1521,11 +1536,11 @@ if not final_df.empty:
 
         row_tuple = (
           m_id,
-          r.get("instanceId") or None,
-          r.get("raw_timestamp") or None,
-          r.get("messageType") or None,
-          r.get("mediaCaption") or None,
-          r.get("senderLid") or None,
+          r.get("instance_id") or None,
+          to_epoch_int(r.get("raw_timestamp")),
+          r.get("message_type") or None,
+          r.get("media_caption") or None,
+          r.get("sender_lid") or None,
           r.get("Group") or None,
           r.get("GroupID") or None,
           date_str,

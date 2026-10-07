@@ -102,7 +102,7 @@ The keyword rules are not tuned by hand. A separate **Keyword Agent** reviews th
 * **🚦 Circuit breaker:** An AI health check runs before the batch, and the job aborts after 5 consecutive LLM failures (e.g. exhausted API credit) so no half-processed data is written. If the LLM returns a sentiment value other than `P`/`N`/`I`, a dedicated correction prompt re-asks once; if that also fails the job stops before any write, and queued AI tasks are cancelled.
 * **💾 Dual-write output:** A fixed 48-column schema (12 message fields + 35 brand columns + `Other_Brands`) is appended to half-month Google Sheets (`yymm_DailyData_Part1` = days 1–15, `Part2` = 16–end) with formula-injection escaping and 429 back-off retries, and bulk-inserted into a Supabase `message_full` table together with basic message metadata. Duplicate messages are skipped automatically, and the run summary reports how many rows were newly inserted vs. skipped. Each target can be switched off per run with the `write_sheet` / `write_database` inputs. Dates are normalised to `YYYY-MM-DD` with day-first parsing, so `02/10/2026` is never read as 10 February. A test-sheet mode redirects all output away from production sheets.
 * **🔁 Incremental runs & reruns:** The workflow is triggered manually (`workflow_dispatch`). A run without a date processes the last 65 minutes (HKT); the incremental window is 5 minutes longer than the run interval to guard against gaps. A concurrency lock queues overlapping runs so two jobs never write at once. Reruns via the workflow's `target_date` input: a full day (`260928` or `2026-09-28`), a multi-day range (`2026-07-01 to 2026-09-30`, `260701-260930`) or a precise time range (`260928 14:00-16:00`, or a date plus the separate `time_start` / `time_end` inputs, e.g. `9:00` → `09:00:00`).
-* **📱 WhatsApp LID handling:** WhatsApp device LIDs are recognised, stored as `senderLid`, and never written as a real `userPhone`. Image/video captions are analysed when present.
+* **📱 WhatsApp LID handling:** WhatsApp device LIDs are recognised, stored as `sender_lid`, and never written as a real `userPhone`. Image/video captions are analysed when present.
 * **📊 Run summary:** The final log summary includes the number of sentiment corrections and the per-brand hit distribution for the batch.
 * **🎯 Group filter:** An optional `target_group_ids` input (comma-separated) limits a run to specific WhatsApp groups, e.g. to rerun just one group's history.
 
@@ -142,26 +142,26 @@ Trigger: the workflow is triggered manually via **Actions → WhatsApp Data NLP 
 | Column | Type |
 | :--- | :--- |
 | `message_id` | `TEXT` (unique) |
-| `instanceId` | `TEXT` |
-| `raw_timestamp` | `TEXT` |
-| `messageType` | `TEXT` |
-| `mediaCaption` | `TEXT` |
-| `senderLid` | `TEXT` |
+| `instance_id` | `TEXT` |
+| `raw_timestamp` | `BIGINT` (epoch) |
+| `message_type` | `TEXT` |
+| `media_caption` | `TEXT` |
+| `sender_lid` | `TEXT` |
 
 ```sql
 ALTER TABLE public.message_full
-  ADD COLUMN IF NOT EXISTS message_id      TEXT,
-  ADD COLUMN IF NOT EXISTS "instanceId"    TEXT,
-  ADD COLUMN IF NOT EXISTS "raw_timestamp" TEXT,
-  ADD COLUMN IF NOT EXISTS "messageType"   TEXT,
-  ADD COLUMN IF NOT EXISTS "mediaCaption"  TEXT,
-  ADD COLUMN IF NOT EXISTS "senderLid"     TEXT;
+  ADD COLUMN IF NOT EXISTS message_id    TEXT,
+  ADD COLUMN IF NOT EXISTS instance_id   TEXT,
+  ADD COLUMN IF NOT EXISTS raw_timestamp BIGINT,
+  ADD COLUMN IF NOT EXISTS message_type  TEXT,
+  ADD COLUMN IF NOT EXISTS media_caption TEXT,
+  ADD COLUMN IF NOT EXISTS sender_lid    TEXT;
 
 ALTER TABLE public.message_full
   ADD CONSTRAINT message_full_message_id_key UNIQUE (message_id);
 ```
 
-Rows without a `message_id` are not written to Supabase; they are logged as a warning and counted as skipped.
+`raw_timestamp` stores the epoch value as an integer (numeric strings are accepted; anything else is written as NULL). Rows without a `message_id` are not written to Supabase; they are logged as a warning and counted as skipped.
 
 ### 🔑 Keyword Sheet Structure
 

@@ -102,7 +102,7 @@ https://github.com/user-attachments/assets/2c191493-7525-4425-b3ee-d2e9db2a7130
 * **🚦 熔斷保護：** 批次開始前先檢測 AI 服務狀態，運行中連續 5 次 LLM 失敗（如 API 額度耗盡）即中止任務，避免寫入半成品數據。若 LLM 回傳 `P`／`N`／`I` 以外的情緒值，會以專項糾錯提示重問一次；仍失敗則在寫入前終止任務，並取消排隊中的 AI 任務。
 * **💾 雙軌寫入：** 固定 48 欄格式（12 個訊息欄位 + 35 個品牌欄位 + `Other_Brands`），按半月分表寫入 Google Sheets（`yymm_DailyData_Part1` = 1–15 日，`Part2` = 16 日至月底），內建公式注入防護與 429 限流指數退避重試；同時批次寫入 Supabase `message_full` 表，並附帶基本訊息中繼資料。重複訊息自動略過，運行摘要會列出新入庫與略過的筆數。可用 `write_sheet`／`write_database` 表單選項逐次關閉個別寫入目標。日期一律以「日優先」解析並統一為 `YYYY-MM-DD`，`02/10/2026` 不會被誤讀為 2 月 10 日。另設測試表模式，避免污染正式數據。
 * **🔁 增量運行與重跑：** 手動觸發（workflow_dispatch）。未指定日期時處理香港時間最近 65 分鐘的訊息，增量窗口比運行間隔多 5 分鐘以防漏。並以並發鎖排隊，確保兩個任務不會同時寫入。可於 Workflow 表單輸入 `target_date` 重跑：單日（`260928` 或 `2026-09-28`）、跨日範圍（`2026-07-01 to 2026-09-30`、`260701-260930`）或精確時段（`260928 14:00-16:00`，或日期加上獨立的 `time_start`／`time_end` 欄位，例如 `9:00` 自動補成 `09:00:00`）。
-* **📱 WhatsApp LID 處理：** 識別 WhatsApp 設備 LID，存入 `senderLid`，不會當作真實 `userPhone` 寫入；圖片／影片如有說明文字會一併分析。
+* **📱 WhatsApp LID 處理：** 識別 WhatsApp 設備 LID，存入 `sender_lid`，不會當作真實 `userPhone` 寫入；圖片／影片如有說明文字會一併分析。
 * **📊 運行摘要：** 最終日誌摘要包含情緒糾錯次數與本批次各品牌命中分佈。
 * **🎯 指定群組：** 可選填 `target_group_ids`（逗號分隔），只處理指定的 WhatsApp 群組，例如單獨重跑某個群組的歷史數據。
 
@@ -142,26 +142,26 @@ https://github.com/user-attachments/assets/2c191493-7525-4425-b3ee-d2e9db2a7130
 | 欄位 | 型別 |
 | :--- | :--- |
 | `message_id` | `TEXT`（唯一） |
-| `instanceId` | `TEXT` |
-| `raw_timestamp` | `TEXT` |
-| `messageType` | `TEXT` |
-| `mediaCaption` | `TEXT` |
-| `senderLid` | `TEXT` |
+| `instance_id` | `TEXT` |
+| `raw_timestamp` | `BIGINT` (epoch) |
+| `message_type` | `TEXT` |
+| `media_caption` | `TEXT` |
+| `sender_lid` | `TEXT` |
 
 ```sql
 ALTER TABLE public.message_full
-  ADD COLUMN IF NOT EXISTS message_id      TEXT,
-  ADD COLUMN IF NOT EXISTS "instanceId"    TEXT,
-  ADD COLUMN IF NOT EXISTS "raw_timestamp" TEXT,
-  ADD COLUMN IF NOT EXISTS "messageType"   TEXT,
-  ADD COLUMN IF NOT EXISTS "mediaCaption"  TEXT,
-  ADD COLUMN IF NOT EXISTS "senderLid"     TEXT;
+  ADD COLUMN IF NOT EXISTS message_id    TEXT,
+  ADD COLUMN IF NOT EXISTS instance_id   TEXT,
+  ADD COLUMN IF NOT EXISTS raw_timestamp BIGINT,
+  ADD COLUMN IF NOT EXISTS message_type  TEXT,
+  ADD COLUMN IF NOT EXISTS media_caption TEXT,
+  ADD COLUMN IF NOT EXISTS sender_lid    TEXT;
 
 ALTER TABLE public.message_full
   ADD CONSTRAINT message_full_message_id_key UNIQUE (message_id);
 ```
 
-沒有 `message_id` 的記錄不會寫入 Supabase，會記一條 warning 並計入略過筆數。
+`raw_timestamp` 以整數存放 epoch 時間戳（接受數字字串，無法轉換時寫入 NULL）。沒有 `message_id` 的記錄不會寫入 Supabase，會記一條 warning 並計入略過筆數。
 
 ### 🔑 關鍵詞表結構
 
