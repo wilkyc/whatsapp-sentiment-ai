@@ -24,6 +24,8 @@ from config import (
   TEST_WORKSHEET_TAB,
   DB_CONFIG,
   SOURCE_VIEW,
+  SOURCE_COLUMN_KEYS,
+  SOURCE_COLUMN_MAP,
   SUPABASE_DB_CONFIG,
   SUPABASE_FULL_TABLE,
   INTERNAL_PHONES_JSON,
@@ -43,7 +45,9 @@ import requests
 # ⚙️ 1. 核心參數與多模式重跑解析
 # ==========================================
 def _env_flag(name, default="true"):
-  return os.environ.get(name, default).strip().lower() in ["true", "1", "yes"]
+  # 空字串 (例如未填的表單輸入或未設定的變數) 視同未設定，回退到預設值
+  val = os.environ.get(name, "").strip().lower() or default
+  return val in ["true", "1", "yes"]
 
 # 寫入目標開關 (預設皆開啟；手動觸發時可個別關閉)
 ENABLE_WRITE_SHEET = _env_flag("WRITE_SHEET")
@@ -395,12 +399,12 @@ if ENV_MANUAL_DATE:
     print("🎯 【精準時段重跑模式】:")
     print("  📅 日期標識:", d_candidates)
     print("  ⏰ 規範化時間區間 (自動補零): %s ~ %s" % (t_start, t_end))
-    sql_where_clause = "sentdate = ANY(%s) AND senttime >= %s AND senttime <= %s"
+    sql_where_clause = "sent_date = ANY(%s) AND sent_time >= %s AND sent_time <= %s"
     sql_params = (d_candidates, t_start, t_end)
   else:
     print("🎯 【全天批次重跑模式】:")
     print("  📅 目標日期標識:", d_candidates)
-    sql_where_clause = "sentdate = ANY(%s)"
+    sql_where_clause = "sent_date = ANY(%s)"
     sql_params = (d_candidates,)
 else:
   start_time_hk = now_hk - timedelta(minutes=INCREMENTAL_WINDOW_MINUTES)
@@ -416,16 +420,16 @@ else:
   print("  ⏰ 時間窗口: %s ~ %s (前 %d 分鐘)" % (start_time_str, end_time_str, INCREMENTAL_WINDOW_MINUTES))
 
   if len(distinct_dates) == 1:
-    sql_where_clause = "sentdate = %s AND senttime >= %s AND senttime <= %s"
+    sql_where_clause = "sent_date = %s AND sent_time >= %s AND sent_time <= %s"
     sql_params = (distinct_dates[0], start_time_str, end_time_str)
   else:
-    sql_where_clause = "((sentdate = %s AND senttime >= %s) OR (sentdate = %s AND senttime <= %s))"
+    sql_where_clause = "((sent_date = %s AND sent_time >= %s) OR (sent_date = %s AND sent_time <= %s))"
     sql_params = (distinct_dates[0], start_time_str, distinct_dates[1], end_time_str)
 
 # 🎯 若配置了指定 TARGET_GROUP_IDS，動態追加 GroupID 門禁
 gid_where_clause = ""
 if TARGET_GROUP_IDS:
-  gid_where_clause = " AND gusid = ANY(%s)"
+  gid_where_clause = " AND group_id = ANY(%s)"
   sql_params = sql_params + (TARGET_GROUP_IDS,)
   print("🎯 【指定群組過濾啟用】僅查詢目標 Group IDs:", TARGET_GROUP_IDS)
 
@@ -433,30 +437,26 @@ raw_db_rows = []
 try:
   conn = psycopg2.connect(**DB_CONFIG)
   with conn.cursor(cursor_factory=RealDictCursor) as cur:
-    # 來源 view 名以 sql.Identifier 引用 (config.py 已做白名單驗證)；WHERE 子句為代碼內固定片段，值一律走參數
+    # 來源 view 名與欄位名皆以 sql.Identifier 引用 (config.py 已做白名單驗證)，
+    # 欄位以 AS 別名統一成內部中性 key；WHERE 子句為代碼內固定片段 (只引用內部 key)，值一律走參數
+    select_cols = sql.SQL(",\n        ").join(
+      sql.SQL("{} AS {}").format(sql.Identifier(SOURCE_COLUMN_MAP[k]), sql.Identifier(k))
+      for k in SOURCE_COLUMN_KEYS
+    )
     query = sql.SQL("""
-      SELECT 
-        id,
-        "instanceId",
-        "messageTimestamp",
-        "messageType",
-        senderlid,
-        groupname,
-        gusid,
-        sentdate,
-        senttime,
-        userphone,
-        messagebody,
-        mediacaption,
-        quotedmessage
-      FROM {source_view}
+      SELECT * FROM (
+        SELECT
+        {select_cols}
+        FROM {source_view}
+      ) AS src
       WHERE {where_clause} {gid_clause}
        AND (
-         (messagebody IS NOT NULL AND TRIM(messagebody) != '' AND messagebody != '[empty]')
-         OR (mediacaption IS NOT NULL AND TRIM(mediacaption) != '' AND mediacaption != '[empty]')
+         (message_body IS NOT NULL AND TRIM(message_body) != '' AND message_body != '[empty]')
+         OR (media_caption IS NOT NULL AND TRIM(media_caption) != '' AND media_caption != '[empty]')
        )
-      ORDER BY gusid, sentdate, senttime, id ASC;
+      ORDER BY group_id, sent_date, sent_time, message_id ASC;
     """).format(
+      select_cols=select_cols,
       source_view=sql.Identifier(*SOURCE_VIEW.split(".")),
       where_clause=sql.SQL(sql_where_clause),
       gid_clause=sql.SQL(gid_where_clause),
@@ -475,12 +475,7 @@ except Exception as e:
 # 🧹 5. 層級匹配與前置去重
 # ==========================================
 def is_whatsapp_lid(phone_raw):
-  """
-  精準識別 WhatsApp 設備 LID 虛擬號：
-  1. 顯式帶有 @lid 後綴
-  2. 長度 >= 14 位純數字 (14-16位 100% 為設備號)
-  3. 長度 == 13 位純數字，且不是合法中國大陸手機號 (排除 861[3-9] 開頭的號碼)
-  """
+  """識別 WhatsApp 設備 LID (非真實電話號碼)。回傳 (is_lid, 純數字)。"""
   if not phone_raw or str(phone_raw).lower() in ["nan", "none", "null", ""]:
     return False, ""
   
@@ -697,32 +692,32 @@ deduped_records_dict = {}
 last_seen_tracker = {}
 
 for row in raw_db_rows:
-  raw_mid = str(row.get("id") or "").strip()
-  inst_id = str(row.get("instanceId") or row.get("instanceid") or "").strip()
-  raw_ts = row.get("messageTimestamp") or row.get("messagetimestamp")
-  msg_type = str(row.get("messageType") or row.get("messagetype") or "").strip()
+  raw_mid = str(row.get("message_id") or "").strip()
+  inst_id = str(row.get("instance_id") or "").strip()
+  raw_ts = row.get("message_ts")
+  msg_type = str(row.get("message_type") or "").strip()
   
-  sender_lid = str(row.get("senderlid") or row.get("senderLid") or "").strip()
+  sender_lid = str(row.get("sender_lid") or "").strip()
   if sender_lid.lower() in ["nan", "none", "null"]: sender_lid = ""
 
-  raw_caption = str(row.get("mediacaption") or row.get("mediaCaption") or "").strip()
-  body = str(row.get("messagebody") or "").strip()
+  raw_caption = str(row.get("media_caption") or "").strip()
+  body = str(row.get("message_body") or "").strip()
   if raw_caption and raw_caption.lower() not in ["nan", "null", "none"]:
     body = raw_caption
 
   if body.lower() in ["nan", "null", "none", ""]:
     continue
 
-  quoted = str(row.get("quotedmessage") or "").strip()
+  quoted = str(row.get("quoted_message") or "").strip()
   if quoted.lower() in ["nan", "null", "none"]:
     quoted = ""
 
-  gusid = str(row.get("gusid") or "").strip()
-  if gusid.endswith(".0"):
-    gusid = gusid[:-2]
-  group_name = group_map.get(gusid, str(row.get("groupname") or "").strip())
+  group_id_val = str(row.get("group_id") or "").strip()
+  if group_id_val.endswith(".0"):
+    group_id_val = group_id_val[:-2]
+  group_name = group_map.get(group_id_val, str(row.get("group_name") or "").strip())
 
-  phone_raw = str(row.get("userphone") or "").strip()
+  phone_raw = str(row.get("user_phone") or "").strip()
   if phone_raw.lower() in ["nan", "none", "null"]: phone_raw = ""
 
   is_lid, clean_phone_digits = is_whatsapp_lid(phone_raw)
@@ -737,11 +732,11 @@ for row in raw_db_rows:
   curr_score, curr_clean_digits = analyze_phone_quality(phone_raw)
   internal_flag = get_internal_status(curr_clean_digits) if curr_score >= 3 else ""
 
-  date_val = str(row.get("sentdate") or "").strip()
-  time_val = str(row.get("senttime") or "").strip()
+  date_val = str(row.get("sent_date") or "").strip()
+  time_val = str(row.get("sent_time") or "").strip()
 
   cleaned_body_fp = re.sub(r"\s+", "", body)
-  base_fingerprint = str(gusid) + "___" + str(cleaned_body_fp)
+  base_fingerprint = str(group_id_val) + "___" + str(cleaned_body_fp)
 
   current_time_obj = pd.to_datetime(str(date_val) + " " + str(time_val), errors="coerce", dayfirst=True)
 
@@ -819,7 +814,7 @@ for row in raw_db_rows:
       "senderLid": sender_lid,
 
       "Group": group_name,
-      "GroupID": gusid,
+      "GroupID": group_id_val,
       "Date": date_val,
       "Time": time_val,
       "time_obj": current_time_obj,
@@ -1506,9 +1501,11 @@ if not final_df.empty:
       ]
 
       insert_rows = []
+      missing_id_count = 0
       for r in cleaned_records:
         m_id = str(r.get("message_id") or "").strip()
         if not m_id:
+          missing_id_count += 1
           continue
 
         d_val = str(r.get("Date") or "").strip()
@@ -1580,23 +1577,22 @@ if not final_df.empty:
         )
         insert_rows.append(row_tuple)
 
+      if missing_id_count:
+        print("⚠️ [Supabase] %d 筆記錄缺少 message_id，已略過寫入並計入略過筆數。" % missing_id_count)
+        stats["db_skipped_count"] = missing_id_count
+
       if insert_rows:
         sp_conn = psycopg2.connect(**SUPABASE_DB_CONFIG)
         with sp_conn.cursor() as cur:
           table_ident = sql.Identifier("public", SUPABASE_FULL_TABLE).as_string(cur)
-          cur.execute("SELECT COUNT(*) FROM " + table_ident + ";")
-          count_before = cur.fetchone()[0]
-
-          insert_query = "INSERT INTO " + table_ident + " (" + ", ".join(db_cols) + ") VALUES %s ON CONFLICT (message_id) DO NOTHING;"
-          execute_values(cur, insert_query, insert_rows, page_size=1000)
+          insert_query = "INSERT INTO " + table_ident + " (" + ", ".join(db_cols) + ") VALUES %s ON CONFLICT (message_id) DO NOTHING RETURNING message_id;"
+          # fetch=True 會彙總所有分頁的 RETURNING 結果 (rowcount 只反映最後一頁)
+          inserted = execute_values(cur, insert_query, insert_rows, page_size=1000, fetch=True)
           sp_conn.commit()
-
-          cur.execute("SELECT COUNT(*) FROM " + table_ident + ";")
-          count_after = cur.fetchone()[0]
         sp_conn.close()
 
-        stats["db_inserted_count"] = count_after - count_before
-        stats["db_skipped_count"] = len(insert_rows) - stats["db_inserted_count"]
+        stats["db_inserted_count"] = len(inserted)
+        stats["db_skipped_count"] = len(insert_rows) - len(inserted) + missing_id_count
         print("✅ [Supabase] 寫入完成！新入庫: %d 筆，重複略過: %d 筆 (表: 【%s】)" % (
           stats["db_inserted_count"], stats["db_skipped_count"], SUPABASE_FULL_TABLE))
     except Exception as e:

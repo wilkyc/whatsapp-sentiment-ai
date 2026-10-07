@@ -100,9 +100,9 @@ The keyword rules are not tuned by hand. A separate **Keyword Agent** reviews th
 * **🔗 Reply tracing:** When a message answers an earlier one, Python re-aligns the model's `reply_origin` to the full original text (emoji included) in the context window, producing a clean `reply` column.
 * **🏷️ Brand roll-up & alert flag:** Sub-brand sentiments automatically roll up to their parent brand column (`MASTER_BRAND_ROLLUP`, N > P > I priority), a literal-match safety net marks a brand as `I` if the LLM missed a brand that was explicitly named, and a `warning` flag marks negative mentions of the core brand for CS/PR follow-up.
 * **🚦 Circuit breaker:** An AI health check runs before the batch, and the job aborts after 5 consecutive LLM failures (e.g. exhausted API credit) so no half-processed data is written. If the LLM returns a sentiment value other than `P`/`N`/`I`, a dedicated correction prompt re-asks once; if that also fails the job stops before any write, and queued AI tasks are cancelled.
-* **💾 Dual-write output:** A fixed 48-column schema (12 message fields + 35 brand columns + `Other_Brands`) is appended to half-month Google Sheets (`yymm_DailyData_Part1` = days 1–15, `Part2` = 16–end) with formula-injection escaping and 429 back-off retries, and bulk-inserted into a Supabase `message_full` table together with message metadata (message ID, instance ID, raw timestamp, message type, media caption, sender LID). The insert uses `ON CONFLICT (message_id) DO NOTHING`, and the run summary reports how many rows were newly inserted vs. skipped as duplicates. Each target can be switched off per run with the `write_sheet` / `write_database` inputs. Dates are normalised to `YYYY-MM-DD` with day-first parsing, so `02/10/2026` is never read as 10 February. A test-sheet mode redirects all output away from production sheets.
+* **💾 Dual-write output:** A fixed 48-column schema (12 message fields + 35 brand columns + `Other_Brands`) is appended to half-month Google Sheets (`yymm_DailyData_Part1` = days 1–15, `Part2` = 16–end) with formula-injection escaping and 429 back-off retries, and bulk-inserted into a Supabase `message_full` table together with basic message metadata. Duplicate messages are skipped automatically, and the run summary reports how many rows were newly inserted vs. skipped. Each target can be switched off per run with the `write_sheet` / `write_database` inputs. Dates are normalised to `YYYY-MM-DD` with day-first parsing, so `02/10/2026` is never read as 10 February. A test-sheet mode redirects all output away from production sheets.
 * **🔁 Incremental runs & reruns:** The workflow is triggered manually (`workflow_dispatch`). A run without a date processes the last 65 minutes (HKT); the incremental window is 5 minutes longer than the run interval to guard against gaps. A concurrency lock queues overlapping runs so two jobs never write at once. Reruns via the workflow's `target_date` input: a full day (`260928` or `2026-09-28`), a multi-day range (`2026-07-01 to 2026-09-30`, `260701-260930`) or a precise time range (`260928 14:00-16:00`, or a date plus the separate `time_start` / `time_end` inputs, e.g. `9:00` → `09:00:00`).
-* **📱 WhatsApp LID handling:** Device-linked IDs (`@lid` suffix or 13–16-digit numbers that are not valid phone numbers) are recognised, stored as `senderLid`, and never written as a real `userPhone`. Image/video captions are analysed when present.
+* **📱 WhatsApp LID handling:** WhatsApp device LIDs are recognised, stored as `senderLid`, and never written as a real `userPhone`. Image/video captions are analysed when present.
 * **📊 Run summary:** The final log summary includes the number of sentiment corrections and the per-brand hit distribution for the batch.
 * **🎯 Group filter:** An optional `target_group_ids` input (comma-separated) limits a run to specific WhatsApp groups, e.g. to rerun just one group's history.
 
@@ -114,7 +114,7 @@ The keyword rules are not tuned by hand. A separate **Keyword Agent** reviews th
 ### 🚀 Setup
 
 1. `pip install -r requirements.txt` (Python 3.11)
-2. Copy `.env.example` → `.env` and fill in values (for local runs), and place the Google service-account key at `service_account.json` (or pass the full JSON in `GOOGLE_SERVICE_ACCOUNT_KEY`). Share the keyword, group-info and DailyData sheets with the service account.
+2. Copy `.env.example` → `.env` and fill in values (for local runs), and place the Google service-account key at `service_account.json` (or pass the full JSON in `GOOGLE_SERVICE_ACCOUNT_KEY`; `GCP_SA_KEY` is accepted as a fallback variable name). Share the keyword, group-info and DailyData sheets with the service account.
 3. Optional: copy `internal_phones.example.json` → `internal_phones.json` (gitignored) to tag internal accounts.
 4. `python main.py` (empty `MANUAL_DATE` = last 65 minutes; `MANUAL_DATE=260928` = full day; `MANUAL_DATE="2026-07-01 to 2026-09-30"` = date range; `MANUAL_DATE="260928 14:00-16:00"` = time range, or `MANUAL_TIME_START` / `MANUAL_TIME_END`; `WRITE_SHEET=false` / `WRITE_DATABASE=false` skip a target). Optional `TARGET_GROUP_IDS="<id1>,<id2>"` processes only those groups.
 
@@ -127,6 +127,7 @@ The keyword rules are not tuned by hand. A separate **Keyword Agent** reviews th
 | `DB_HOST`, `DB_NAME`, `DB_USER`, `DB_PASSWORD` | ✅ | Source PostgreSQL (WhatsApp message store) |
 | `DB_PORT` | optional | Defaults to `5432` |
 | `SOURCE_VIEW` | optional | Source view / table to read messages from (`schema.name` or `name`, letters/digits/underscore only; validated and quoted as an SQL identifier). Defaults to `public.messages_view` |
+| `SOURCE_COLUMN_MAP` | optional | JSON object mapping internal column keys to the source view's column names (only keys to override, e.g. `{"sent_date": "msg_date"}`). Defaults to the neutral internal keys; names are validated and quoted as SQL identifiers |
 | `KEYWORDS_SPREADSHEET_ID` or `KEYWORDS_SHEET_URL` | ✅ (one of) | Sheet with `brand_keywords` / `ift_keywords` tabs (tab names overridable via `BRAND_SHEET_NAME` / `IFT_SHEET_NAME`) |
 | `GROUPINFO_SHEET_URL` | ✅ | Sheet with `groups` tab (group ID → name) |
 | `SUPABASE_DB_HOST`, `SUPABASE_DB_USER`, `SUPABASE_DB_PASSWORD` | for Supabase | Supabase session pooler; write is skipped if host/password is empty |
@@ -135,6 +136,32 @@ The keyword rules are not tuned by hand. A separate **Keyword Agent** reviews th
 | `INTERNAL_PHONES_JSON` | optional | JSON like `{"LabelA": ["9xxxxxxx"], "LabelB": [...]}` for the `Internal` column |
 
 Trigger: the workflow is triggered manually via **Actions → WhatsApp Data NLP Pipeline → Run workflow** (optional `target_date`, `time_start`, `time_end`, `target_group_ids`, and the `write_sheet` / `write_database` checkboxes).
+
+**Supabase migration (for existing `message_full` tables):** the insert now also writes 6 message-metadata columns, and `message_id` must be unique so duplicates are skipped automatically.
+
+| Column | Type |
+| :--- | :--- |
+| `message_id` | `TEXT` (unique) |
+| `instanceId` | `TEXT` |
+| `raw_timestamp` | `TEXT` |
+| `messageType` | `TEXT` |
+| `mediaCaption` | `TEXT` |
+| `senderLid` | `TEXT` |
+
+```sql
+ALTER TABLE public.message_full
+  ADD COLUMN IF NOT EXISTS message_id      TEXT,
+  ADD COLUMN IF NOT EXISTS "instanceId"    TEXT,
+  ADD COLUMN IF NOT EXISTS "raw_timestamp" TEXT,
+  ADD COLUMN IF NOT EXISTS "messageType"   TEXT,
+  ADD COLUMN IF NOT EXISTS "mediaCaption"  TEXT,
+  ADD COLUMN IF NOT EXISTS "senderLid"     TEXT;
+
+ALTER TABLE public.message_full
+  ADD CONSTRAINT message_full_message_id_key UNIQUE (message_id);
+```
+
+Rows without a `message_id` are not written to Supabase; they are logged as a warning and counted as skipped.
 
 ### 🔑 Keyword Sheet Structure
 
