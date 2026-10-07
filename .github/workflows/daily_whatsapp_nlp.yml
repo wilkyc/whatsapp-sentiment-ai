@@ -4,8 +4,26 @@ on:
   # 只支援手動觸發 (workflow_dispatch)：在 GitHub 網頁 Actions 頁面點擊 Run workflow
   workflow_dispatch:
     inputs:
+      write_sheet:
+        description: '寫入 Google Sheets'
+        required: true
+        type: boolean
+        default: true
+      write_database:
+        description: '寫入 Supabase 全量表'
+        required: true
+        type: boolean
+        default: true
       target_date:
-        description: '手動重跑參數 (留空=跑最近 65 分鐘增量; 單日=260928 或 2026-09-28; 跨日範圍=2026-07-01 to 2026-09-30; 精確時段=260928 14:00-16:00)'
+        description: '日期 (留空=跑最近 65 分鐘增量; 單日=260928 或 2026-09-28; 跨日範圍=2026-07-01 to 2026-09-30; 也可寫 260928 14:00-16:00)'
+        required: false
+        default: ''
+      time_start:
+        description: '開始時間 (可選，留空=全天；例如 09:00 或 9:00)'
+        required: false
+        default: ''
+      time_end:
+        description: '結束時間 (可選，留空=全天；例如 10:00)'
         required: false
         default: ''
       target_group_ids:
@@ -57,6 +75,8 @@ jobs:
           DB_USER: ${{ secrets.DB_USER }}
           DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
           SOURCE_VIEW: ${{ secrets.SOURCE_VIEW }}
+          SOURCE_COLUMN_MAP: ${{ secrets.SOURCE_COLUMN_MAP }}
+          VALID_PHONE_13_REGEX: ${{ secrets.VALID_PHONE_13_REGEX }}
           POE_API_KEY: ${{ secrets.POE_API_KEY }}
           SUPABASE_DB_HOST: ${{ secrets.SUPABASE_DB_HOST }}
           SUPABASE_DB_PORT: ${{ secrets.SUPABASE_DB_PORT }}
@@ -73,6 +93,11 @@ jobs:
           PYTHONUNBUFFERED: "1"
           # 接收手動觸發表單輸入的日期/時段參數
           MANUAL_DATE: ${{ github.event.inputs.target_date }}
+          MANUAL_TIME_START: ${{ github.event.inputs.time_start }}
+          MANUAL_TIME_END: ${{ github.event.inputs.time_end }}
+          # 寫入目標開關
+          WRITE_SHEET: ${{ github.event.inputs.write_sheet }}
+          WRITE_DATABASE: ${{ github.event.inputs.write_database }}
           # 指定群組過濾 (留空=處理所有群組)
           TARGET_GROUP_IDS: ${{ github.event.inputs.target_group_ids }}
         run: |

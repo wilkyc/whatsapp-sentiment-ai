@@ -99,9 +99,11 @@ https://github.com/user-attachments/assets/2c191493-7525-4425-b3ee-d2e9db2a7130
 * **🧩 上下文短稱解析：** 單獨出現時有歧義的產品短稱（如只提子品牌名、未提母品牌的 `COMBO` 規則），只有在上下文能確認時才計入：引用訊息提到母品牌、同群組 30 分鐘內前文提過母品牌，或緊鄰上一條發言明確在談奶粉。
 * **🔗 回覆溯源 (reply)：** 當訊息是回應前文時，Python 會把模型輸出的 `reply_origin` 與上下文逐句比對，還原完整原句（保留 Emoji），寫入 `reply` 欄位。
 * **🏷️ 品牌歸併與警示：** 子品牌情緒依 N > P > I 優先順序自動歸併至母品牌欄位（`MASTER_BRAND_ROLLUP`）；若訊息明確寫出品牌但 AI 漏標，會以字面匹配保底標記為 `I`；核心品牌出現負面評價時於 `warning` 欄標記，方便客服／公關跟進。
-* **🚦 熔斷保護：** 批次開始前先檢測 AI 服務狀態，運行中連續 5 次 LLM 失敗（如 API 額度耗盡）即中止任務，避免寫入半成品數據。
-* **💾 雙軌寫入：** 固定 48 欄格式（12 個訊息欄位 + 35 個品牌欄位 + `Other_Brands`），按半月分表寫入 Google Sheets（`yymm_DailyData_Part1` = 1–15 日，`Part2` = 16 日至月底），內建公式注入防護與 429 限流指數退避重試；同時批次寫入 Supabase `message_full` 表。日期一律以「日優先」解析並統一為 `YYYY-MM-DD`，`02/10/2026` 不會被誤讀為 2 月 10 日。另設測試表模式，避免污染正式數據。
-* **🔁 增量運行與重跑：** 手動觸發（workflow_dispatch）。未指定日期時處理香港時間最近 65 分鐘的訊息，增量窗口比運行間隔多 5 分鐘以防漏。並以並發鎖排隊，確保兩個任務不會同時寫入。可於 Workflow 表單輸入 `target_date` 重跑：單日（`260928` 或 `2026-09-28`）、跨日範圍（`2026-07-01 to 2026-09-30`、`260701-260930`）或精確時段（`260928 14:00-16:00`）。
+* **🚦 熔斷保護：** 批次開始前先檢測 AI 服務狀態，運行中連續 5 次 LLM 失敗（如 API 額度耗盡）即中止任務，避免寫入半成品數據。若 LLM 回傳 `P`／`N`／`I` 以外的情緒值，會以專項糾錯提示重問一次；仍失敗則在寫入前終止任務，並取消排隊中的 AI 任務。
+* **💾 雙軌寫入：** 固定 48 欄格式（12 個訊息欄位 + 35 個品牌欄位 + `Other_Brands`），按半月分表寫入 Google Sheets（`yymm_DailyData_Part1` = 1–15 日，`Part2` = 16 日至月底），內建公式注入防護與 429 限流指數退避重試；同時批次寫入 Supabase `message_full` 表，並附帶基本訊息中繼資料。重複訊息自動略過，運行摘要會列出新入庫與略過的筆數。可用 `write_sheet`／`write_database` 表單選項逐次關閉個別寫入目標。日期一律以「日優先」解析並統一為 `YYYY-MM-DD`，`02/10/2026` 不會被誤讀為 2 月 10 日。另設測試表模式，避免污染正式數據。
+* **🔁 增量運行與重跑：** 手動觸發（workflow_dispatch）。未指定日期時處理香港時間最近 65 分鐘的訊息，增量窗口比運行間隔多 5 分鐘以防漏。並以並發鎖排隊，確保兩個任務不會同時寫入。可於 Workflow 表單輸入 `target_date` 重跑：單日（`260928` 或 `2026-09-28`）、跨日範圍（`2026-07-01 to 2026-09-30`、`260701-260930`）或精確時段（`260928 14:00-16:00`，或日期加上獨立的 `time_start`／`time_end` 欄位，例如 `9:00` 自動補成 `09:00:00`）。
+* **📱 WhatsApp LID 處理：** 識別 WhatsApp 設備 LID，存入 `sender_lid`，不會當作真實 `userPhone` 寫入；圖片／影片如有說明文字會一併分析。
+* **📊 運行摘要：** 最終日誌摘要包含情緒糾錯次數與本批次各品牌命中分佈。
 * **🎯 指定群組：** 可選填 `target_group_ids`（逗號分隔），只處理指定的 WhatsApp 群組，例如單獨重跑某個群組的歷史數據。
 
 ### 🧰 配套腳本
@@ -112,9 +114,9 @@ https://github.com/user-attachments/assets/2c191493-7525-4425-b3ee-d2e9db2a7130
 ### 🚀 安裝與設定 (Setup)
 
 1. `pip install -r requirements.txt`（Python 3.11）
-2. 本地執行時，複製 `.env.example` 為 `.env` 並填入數值，將 Google 服務帳戶金鑰存為 `service_account.json`，並把關鍵詞表、群組資訊表及 DailyData 表共用給該服務帳戶。
+2. 本地執行時，複製 `.env.example` 為 `.env` 並填入數值，將 Google 服務帳戶金鑰存為 `service_account.json`（或以 `GOOGLE_SERVICE_ACCOUNT_KEY` 傳入完整 JSON；`GCP_SA_KEY` 為備用變數名），並把關鍵詞表、群組資訊表及 DailyData 表共用給該服務帳戶。
 3. 選用：複製 `internal_phones.example.json` 為 `internal_phones.json`（已 gitignore）以標記內部帳號。
-4. 執行 `python main.py`（`MANUAL_DATE` 留空 = 最近 65 分鐘；`MANUAL_DATE=260928` = 全天；`MANUAL_DATE="2026-07-01 to 2026-09-30"` = 跨日範圍；`MANUAL_DATE="260928 14:00-16:00"` = 指定時段）。可選 `TARGET_GROUP_IDS="<id1>,<id2>"` 只處理指定群組。
+4. 執行 `python main.py`（`MANUAL_DATE` 留空 = 最近 65 分鐘；`MANUAL_DATE=260928` = 全天；`MANUAL_DATE="2026-07-01 to 2026-09-30"` = 跨日範圍；`MANUAL_DATE="260928 14:00-16:00"` = 指定時段，或另設 `MANUAL_TIME_START`／`MANUAL_TIME_END`；`WRITE_SHEET=false`／`WRITE_DATABASE=false` 可略過個別寫入目標）。可選 `TARGET_GROUP_IDS="<id1>,<id2>"` 只處理指定群組。
 
 **GitHub Actions Secrets**（Workflow：`.github/workflows/daily_whatsapp_nlp.yml`）：
 
@@ -125,6 +127,8 @@ https://github.com/user-attachments/assets/2c191493-7525-4425-b3ee-d2e9db2a7130
 | `DB_HOST`、`DB_NAME`、`DB_USER`、`DB_PASSWORD` | ✅ | 來源 PostgreSQL（WhatsApp 訊息庫） |
 | `DB_PORT` | 選填 | 預設 `5432` |
 | `SOURCE_VIEW` | 選填 | 讀取訊息的來源 view／表名（`schema.name` 或 `name`，只限字母、數字、底線；會做格式驗證並以 SQL 識別符引用），預設 `public.messages_view` |
+| `SOURCE_COLUMN_MAP` | 選填（JSON） | JSON 物件，把內部欄位 key 對應到來源 view 的實際欄位名（只需列出要覆蓋的 key，例如 `{"sent_date": "msg_date"}`）。預設為中性的內部 key；欄位名會做格式驗證並以 SQL 識別符引用 |
+| `VALID_PHONE_13_REGEX` | 選填 | 可自訂哪些 13 位號碼視為真實電話的正則（對純數字整串比對）。留空 = 所有 13 位號碼一律視為設備 LID；正則無效時會直接報錯停止 |
 | `KEYWORDS_SPREADSHEET_ID` 或 `KEYWORDS_SHEET_URL` | ✅（二選一） | 含 `brand_keywords` / `ift_keywords` 分頁的關鍵詞表（分頁名可用 `BRAND_SHEET_NAME` / `IFT_SHEET_NAME` 覆蓋） |
 | `GROUPINFO_SHEET_URL` | ✅ | 含 `groups` 分頁的試算表（群組 ID → 名稱） |
 | `SUPABASE_DB_HOST`、`SUPABASE_DB_USER`、`SUPABASE_DB_PASSWORD` | 寫入 Supabase 時 | Supabase Session Pooler；host 或密碼為空時自動略過 |
@@ -132,7 +136,33 @@ https://github.com/user-attachments/assets/2c191493-7525-4425-b3ee-d2e9db2a7130
 | `TEST_TARGET_SHEET_URL` | 選填 | 設定後所有輸出只寫入此測試表 |
 | `INTERNAL_PHONES_JSON` | 選填 | 格式如 `{"LabelA": ["9xxxxxxx"], "LabelB": [...]}`，用於 `Internal` 欄位 |
 
-觸發方式：手動觸發（workflow_dispatch），於 **Actions → WhatsApp Data NLP Pipeline → Run workflow** 執行（可選填 `target_date` 及 `target_group_ids`）。
+觸發方式：手動觸發（workflow_dispatch），於 **Actions → WhatsApp Data NLP Pipeline → Run workflow** 執行（可選填 `target_date`、`time_start`、`time_end`、`target_group_ids`，以及 `write_sheet`／`write_database` 勾選項）。
+
+**Supabase 遷移說明（已有 `message_full` 表時）：** 寫入時會多寫 6 個訊息中繼欄位，且 `message_id` 必須唯一，重複訊息才能自動略過。
+
+| 欄位 | 型別 |
+| :--- | :--- |
+| `message_id` | `TEXT`（唯一） |
+| `instance_id` | `TEXT` |
+| `raw_timestamp` | `BIGINT` (epoch) |
+| `message_type` | `TEXT` |
+| `media_caption` | `TEXT` |
+| `sender_lid` | `TEXT` |
+
+```sql
+ALTER TABLE public.message_full
+  ADD COLUMN IF NOT EXISTS message_id    TEXT,
+  ADD COLUMN IF NOT EXISTS instance_id   TEXT,
+  ADD COLUMN IF NOT EXISTS raw_timestamp BIGINT,
+  ADD COLUMN IF NOT EXISTS message_type  TEXT,
+  ADD COLUMN IF NOT EXISTS media_caption TEXT,
+  ADD COLUMN IF NOT EXISTS sender_lid    TEXT;
+
+ALTER TABLE public.message_full
+  ADD CONSTRAINT message_full_message_id_key UNIQUE (message_id);
+```
+
+`raw_timestamp` 以整數存放 epoch 時間戳（接受數字字串，無法轉換時寫入 NULL）。沒有 `message_id` 的記錄不會寫入 Supabase，會記一條 warning 並計入略過筆數。
 
 ### 🔑 關鍵詞表結構
 

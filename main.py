@@ -24,6 +24,9 @@ from config import (
   TEST_WORKSHEET_TAB,
   DB_CONFIG,
   SOURCE_VIEW,
+  SOURCE_COLUMN_KEYS,
+  SOURCE_COLUMN_MAP,
+  VALID_PHONE_13_RE,
   SUPABASE_DB_CONFIG,
   SUPABASE_FULL_TABLE,
   INTERNAL_PHONES_JSON,
@@ -42,11 +45,44 @@ import requests
 # ==========================================
 # ⚙️ 1. 核心參數與多模式重跑解析
 # ==========================================
-ENV_MANUAL_INPUT = os.environ.get("MANUAL_DATE", "").strip()
+def _env_flag(name, default="true"):
+  # 空字串 (例如未填的表單輸入或未設定的變數) 視同未設定，回退到預設值
+  val = os.environ.get(name, "").strip().lower() or default
+  return val in ["true", "1", "yes"]
+
+# 寫入目標開關 (預設皆開啟；手動觸發時可個別關閉)
+ENABLE_WRITE_SHEET = _env_flag("WRITE_SHEET")
+ENABLE_WRITE_DATABASE = _env_flag("WRITE_DATABASE")
+
+ENV_MANUAL_DATE = os.environ.get("MANUAL_DATE", "").strip()
+ENV_TIME_START = os.environ.get("MANUAL_TIME_START", "").strip()
+ENV_TIME_END = os.environ.get("MANUAL_TIME_END", "").strip()
 
 INCREMENTAL_WINDOW_MINUTES = 65
 CONTEXT_HISTORY_LIMIT = 5
 TIME_TOLERANCE_SECONDS = 60
+
+print(f"🎯 【寫入目標開關狀態】: Google Sheet: {ENABLE_WRITE_SHEET} | Database: {ENABLE_WRITE_DATABASE}")
+
+def normalize_time_str(time_raw, is_end=False):
+  if not time_raw:
+    return "23:59:59" if is_end else "00:00:00"
+  parts = [p.strip() for p in time_raw.replace("：", ":").split(":")]
+  hh = f"{int(parts[0]):02d}" if parts[0].isdigit() else "00"
+  mm = f"{int(parts[1]):02d}" if len(parts) > 1 and parts[1].isdigit() else ("59" if is_end else "00")
+  ss = f"{int(parts[2]):02d}" if len(parts) > 2 and parts[2].isdigit() else ("59" if is_end else "00")
+  return f"{hh}:{mm}:{ss}"
+
+def parse_any_date(date_text):
+  if not date_text:
+    return None
+  date_text = date_text.strip()
+  for fmt in ["%Y-%m-%d", "%d/%m/%Y", "%y%m%d", "%Y%m%d", "%d-%m-%Y", "%Y/%m/%d"]:
+    try:
+      return datetime.strptime(date_text, fmt)
+    except ValueError:
+      pass
+  return None
 
 POE_API_KEY = os.environ.get("POE_API_KEY", "")
 POE_MODEL = "gemini-3.1-flash-lite"
@@ -105,7 +141,11 @@ stats = {
   "spam_detected": 0,
   "generic_no_brand": 0,
   "brand_identified_count": 0,
-  "context_attributed_count": 0
+  "context_attributed_count": 0,
+  "ai_corrections_triggered": 0,
+  "brand_distribution": {},
+  "db_inserted_count": 0,
+  "db_skipped_count": 0
 }
 
 def print_stage_dashboard(stage_name, metrics):
@@ -113,7 +153,12 @@ def print_stage_dashboard(stage_name, metrics):
   print("📊 " + str(stage_name) + " - 統計看板")
   print("=" * 55)
   for key, value in metrics.items():
-    print("%-26s : %s" % (str(key), str(value)))
+    if isinstance(value, dict):
+      print(f"{key:<26} :")
+      for sub_k, sub_v in sorted(value.items(), key=lambda kv: -kv[1]):
+        print(f"   - {sub_k:<22} : {sub_v}")
+    else:
+      print("%-26s : %s" % (str(key), str(value)))
   print("=" * 55 + "\n")
 
 
@@ -303,84 +348,64 @@ now_hk = datetime.now(hk_tz)
 sql_where_clause = ""
 sql_params = ()
 
-def parse_any_date(date_text):
-  date_text = date_text.strip()
-  for fmt in ["%Y-%m-%d", "%d/%m/%Y", "%y%m%d", "%Y%m%d", "%d-%m-%Y"]:
-    try:
-      return datetime.strptime(date_text, fmt)
-    except ValueError:
-      pass
-  return None
+if ENV_MANUAL_DATE:
+  print("\n🐘 檢測到手動輸入日期參數: [%s]" % ENV_MANUAL_DATE)
+  inline_time_match = re.search(r"^([^\s]+)\s+(\d{1,2}:\d{2}(?::\d{2})?)\s*[-~至to]\s*(\d{1,2}:\d{2}(?::\d{2})?)$", ENV_MANUAL_DATE)
+  if inline_time_match:
+    date_part = inline_time_match.group(1).strip()
+    t_start_raw = inline_time_match.group(2).strip()
+    t_end_raw = inline_time_match.group(3).strip()
+  else:
+    date_part = ENV_MANUAL_DATE
+    t_start_raw = ENV_TIME_START
+    t_end_raw = ENV_TIME_END
 
-if ENV_MANUAL_INPUT:
-  print("\n🐘 檢測到手動輸入參數: [%s]" % ENV_MANUAL_INPUT)
-  
-  # 模式 1：精確時段 (例 "260928 14:00-16:00")
-  time_range_match = re.search(r"^(\d{6}|\d{8}|\d{4}-\d{2}-\d{2})\s+(\d{1,2}:\d{2}(?::\d{2})?)-(\d{1,2}:\d{2}(?::\d{2})?)$", ENV_MANUAL_INPUT)
-  
-  # 模式 2：跨天/跨月範圍 (例 "2026-07-01 to 2026-09-30" 或 "260701-260930" 或 "01/07/2026-30/09/2026")
-  date_span_match = re.search(r"^(.*?)(?:\s*(?:to|至|-|~)\s*)([0-9/.\-]+)$", ENV_MANUAL_INPUT, re.IGNORECASE)
+  has_time_filter = bool(t_start_raw or t_end_raw)
+  t_start = normalize_time_str(t_start_raw, is_end=False)
+  t_end = normalize_time_str(t_end_raw, is_end=True)
 
-  if time_range_match:
-    raw_d = time_range_match.group(1).strip()
-    t_start = time_range_match.group(2).strip()
-    t_end = time_range_match.group(3).strip()
-    if len(t_start.split(":")) == 2: t_start += ":00"
-    if len(t_end.split(":")) == 2: t_end += ":59"
+  date_span_match = re.search(r"^(.*?)(?:\s*(?:to|至|-|~)\s*)([0-9/.\-]+)$", date_part, re.IGNORECASE)
 
-    parsed_dt = parse_any_date(raw_d)
-    d_candidates = [raw_d]
-    if parsed_dt:
-      d_candidates.extend([
-        parsed_dt.strftime("%d/%m/%Y"),
-        f"{parsed_dt.day}/{parsed_dt.month}/{parsed_dt.year}",
-        parsed_dt.strftime("%Y-%m-%d")
-      ])
-    d_candidates = list(dict.fromkeys(d_candidates))
-
-    print("🎯 【精準時段重跑模式】:")
-    print("  📅 日期標識:", d_candidates)
-    print("  ⏰ 時間區間: %s ~ %s" % (t_start, t_end))
-    sql_where_clause = "sentdate = ANY(%s) AND senttime >= %s AND senttime <= %s"
-    sql_params = (d_candidates, t_start, t_end)
-
-  elif date_span_match and parse_any_date(date_span_match.group(1)) and parse_any_date(date_span_match.group(2)):
+  if date_span_match and parse_any_date(date_span_match.group(1)) and parse_any_date(date_span_match.group(2)):
     dt_start = parse_any_date(date_span_match.group(1))
     dt_end = parse_any_date(date_span_match.group(2))
-    
     if dt_start > dt_end:
       dt_start, dt_end = dt_end, dt_start
 
-    print(f"🎯 【跨日期長範圍批次模式】: {dt_start.strftime('%Y-%m-%d')} 至 {dt_end.strftime('%Y-%m-%d')}")
+    print(f"🎯 【跨日期長範圍模式】: {dt_start.strftime('%Y-%m-%d')} 至 {dt_end.strftime('%Y-%m-%d')}")
     d_candidates = []
     curr = dt_start
     while curr <= dt_end:
       d_candidates.extend([
         curr.strftime("%d/%m/%Y"),
+        f"{curr.day:02d}/{curr.month:02d}/{curr.year}",
         f"{curr.day}/{curr.month}/{curr.year}",
         curr.strftime("%Y-%m-%d")
       ])
       curr += timedelta(days=1)
     d_candidates = list(dict.fromkeys(d_candidates))
-    print(f"  📅 已動態生成 {len(d_candidates)} 個日期字串候選索引！")
-    sql_where_clause = "sentdate = ANY(%s)"
-    sql_params = (d_candidates,)
-
   else:
-    # 模式 3：單日全天
-    raw_d = ENV_MANUAL_INPUT.strip()
-    parsed_dt = parse_any_date(raw_d)
-    d_candidates = [raw_d]
+    parsed_dt = parse_any_date(date_part)
+    d_candidates = [date_part]
     if parsed_dt:
       d_candidates.extend([
         parsed_dt.strftime("%d/%m/%Y"),
+        f"{parsed_dt.day:02d}/{parsed_dt.month:02d}/{parsed_dt.year}",
         f"{parsed_dt.day}/{parsed_dt.month}/{parsed_dt.year}",
         parsed_dt.strftime("%Y-%m-%d")
       ])
     d_candidates = list(dict.fromkeys(d_candidates))
-    print("🎯 【單日全天批次重跑模式】:")
-    print("  📅 目標全天:", d_candidates)
-    sql_where_clause = "sentdate = ANY(%s)"
+
+  if has_time_filter:
+    print("🎯 【精準時段重跑模式】:")
+    print("  📅 日期標識:", d_candidates)
+    print("  ⏰ 規範化時間區間 (自動補零): %s ~ %s" % (t_start, t_end))
+    sql_where_clause = "sent_date = ANY(%s) AND sent_time >= %s AND sent_time <= %s"
+    sql_params = (d_candidates, t_start, t_end)
+  else:
+    print("🎯 【全天批次重跑模式】:")
+    print("  📅 目標日期標識:", d_candidates)
+    sql_where_clause = "sent_date = ANY(%s)"
     sql_params = (d_candidates,)
 else:
   start_time_hk = now_hk - timedelta(minutes=INCREMENTAL_WINDOW_MINUTES)
@@ -396,16 +421,16 @@ else:
   print("  ⏰ 時間窗口: %s ~ %s (前 %d 分鐘)" % (start_time_str, end_time_str, INCREMENTAL_WINDOW_MINUTES))
 
   if len(distinct_dates) == 1:
-    sql_where_clause = "sentdate = %s AND senttime >= %s AND senttime <= %s"
+    sql_where_clause = "sent_date = %s AND sent_time >= %s AND sent_time <= %s"
     sql_params = (distinct_dates[0], start_time_str, end_time_str)
   else:
-    sql_where_clause = "((sentdate = %s AND senttime >= %s) OR (sentdate = %s AND senttime <= %s))"
+    sql_where_clause = "((sent_date = %s AND sent_time >= %s) OR (sent_date = %s AND sent_time <= %s))"
     sql_params = (distinct_dates[0], start_time_str, distinct_dates[1], end_time_str)
 
 # 🎯 若配置了指定 TARGET_GROUP_IDS，動態追加 GroupID 門禁
 gid_where_clause = ""
 if TARGET_GROUP_IDS:
-  gid_where_clause = " AND gusid = ANY(%s)"
+  gid_where_clause = " AND group_id = ANY(%s)"
   sql_params = sql_params + (TARGET_GROUP_IDS,)
   print("🎯 【指定群組過濾啟用】僅查詢目標 Group IDs:", TARGET_GROUP_IDS)
 
@@ -413,24 +438,26 @@ raw_db_rows = []
 try:
   conn = psycopg2.connect(**DB_CONFIG)
   with conn.cursor(cursor_factory=RealDictCursor) as cur:
-    # 來源 view 名以 sql.Identifier 引用 (config.py 已做白名單驗證)；WHERE 子句為代碼內固定片段，值一律走參數
+    # 來源 view 名與欄位名皆以 sql.Identifier 引用 (config.py 已做白名單驗證)，
+    # 欄位以 AS 別名統一成內部中性 key；WHERE 子句為代碼內固定片段 (只引用內部 key)，值一律走參數
+    select_cols = sql.SQL(",\n        ").join(
+      sql.SQL("{} AS {}").format(sql.Identifier(SOURCE_COLUMN_MAP[k]), sql.Identifier(k))
+      for k in SOURCE_COLUMN_KEYS
+    )
     query = sql.SQL("""
-      SELECT 
-        groupname,
-        gusid,
-        sentdate,
-        senttime,
-        userphone,
-        messagebody,
-        mediacaption,
-        quotedmessage
-      FROM {source_view}
+      SELECT * FROM (
+        SELECT
+        {select_cols}
+        FROM {source_view}
+      ) AS src
       WHERE {where_clause} {gid_clause}
-       AND messagebody IS NOT NULL 
-       AND TRIM(messagebody) != ''
-       AND messagebody != '[empty]'
-      ORDER BY gusid, sentdate, senttime ASC;
+       AND (
+         (message_body IS NOT NULL AND TRIM(message_body) != '' AND message_body != '[empty]')
+         OR (media_caption IS NOT NULL AND TRIM(media_caption) != '' AND media_caption != '[empty]')
+       )
+      ORDER BY group_id, sent_date, sent_time, message_id ASC;
     """).format(
+      select_cols=select_cols,
       source_view=sql.Identifier(*SOURCE_VIEW.split(".")),
       where_clause=sql.SQL(sql_where_clause),
       gid_clause=sql.SQL(gid_where_clause),
@@ -448,26 +475,58 @@ except Exception as e:
 # ==========================================
 # 🧹 5. 層級匹配與前置去重
 # ==========================================
+def to_epoch_int(val):
+  """把 epoch 時間戳 (int / 數字字串) 轉成 int；無法轉換時回傳 None (寫入 NULL)。"""
+  if val is None or isinstance(val, bool):
+    return None
+  if isinstance(val, int):
+    return val
+  if isinstance(val, float):
+    return int(val) if val == val else None
+  txt = str(val).strip()
+  if re.fullmatch(r"-?\d+", txt):
+    return int(txt)
+  if re.fullmatch(r"-?\d+\.\d+", txt):
+    return int(float(txt))
+  return None
+
+def is_whatsapp_lid(phone_raw):
+  """識別 WhatsApp 設備 LID (非真實電話號碼)。回傳 (is_lid, 純數字)。"""
+  if not phone_raw or str(phone_raw).lower() in ["nan", "none", "null", ""]:
+    return False, ""
+  
+  phone_str = str(phone_raw).strip()
+  clean_digits = re.sub(r"\D", "", phone_str)
+
+  if "@lid" in phone_str.lower():
+    return True, clean_digits
+
+  if len(clean_digits) >= 14:
+    return True, clean_digits
+
+  if len(clean_digits) == 13:
+    if not (VALID_PHONE_13_RE and VALID_PHONE_13_RE.fullmatch(clean_digits)):
+      return True, clean_digits
+
+  return False, clean_digits
+
 def analyze_phone_quality(phone):
   phone_str = str(phone).strip()
-  clean_digits = re.sub(r"\D", "", phone_str)
-  if "@" in phone_str:
-    if clean_digits.startswith("852") and len(clean_digits) == 11:
-      return 4, clean_digits[3:]
-    elif len(clean_digits) == 8 and clean_digits[0] in "456789":
-      return 4, clean_digits
-    return 1, clean_digits
-     
-  if re.match(r"^\d+$", phone_str):
-    if phone_str.startswith("852") and len(phone_str) == 11:
-      return 4, phone_str[3:]
-    elif len(phone_str) == 8 and phone_str[0] in "456789":
-      return 4, phone_str
-    elif len(phone_str) >= 12:
-      return 2, phone_str
-    else:
-      return 3, phone_str
-       
+  if not phone_str or phone_str.lower() in ["nan", "none", "null"]:
+    return 0, ""
+
+  is_lid, clean_digits = is_whatsapp_lid(phone_str)
+  if is_lid:
+    return 2, clean_digits
+
+  if clean_digits.startswith("852") and len(clean_digits) == 11 and clean_digits[3] in "456789":
+    return 4, clean_digits[3:]
+  elif len(clean_digits) == 8 and clean_digits[0] in "456789":
+    return 4, clean_digits
+
+  if 9 <= len(clean_digits) <= 13:
+    return 3, clean_digits
+
   return 1, clean_digits
 
 def extract_unique_kws_longest_match(text, target_kws, occupied_mask):
@@ -649,32 +708,51 @@ deduped_records_dict = {}
 last_seen_tracker = {}
 
 for row in raw_db_rows:
-  body = str(row.get("messagebody") or "").strip()
+  raw_mid = str(row.get("message_id") or "").strip()
+  inst_id = str(row.get("instance_id") or "").strip()
+  raw_ts = row.get("message_ts")
+  msg_type = str(row.get("message_type") or "").strip()
+  
+  sender_lid = str(row.get("sender_lid") or "").strip()
+  if sender_lid.lower() in ["nan", "none", "null"]: sender_lid = ""
+
+  raw_caption = str(row.get("media_caption") or "").strip()
+  body = str(row.get("message_body") or "").strip()
+  if raw_caption and raw_caption.lower() not in ["nan", "null", "none"]:
+    body = raw_caption
+
   if body.lower() in ["nan", "null", "none", ""]:
     continue
 
-  caption = str(row.get("mediacaption") or "").strip()
-  if caption and caption.lower() not in ["nan", "null", "none"]:
-    body = caption
-
-  quoted = str(row.get("quotedmessage") or "").strip()
+  quoted = str(row.get("quoted_message") or "").strip()
   if quoted.lower() in ["nan", "null", "none"]:
     quoted = ""
 
-  gusid = str(row.get("gusid") or "").strip()
-  if gusid.endswith(".0"):
-    gusid = gusid[:-2]
-  group_name = group_map.get(gusid, str(row.get("groupname") or "").strip())
+  group_id_val = str(row.get("group_id") or "").strip()
+  if group_id_val.endswith(".0"):
+    group_id_val = group_id_val[:-2]
+  group_name = group_map.get(group_id_val, str(row.get("group_name") or "").strip())
 
-  phone_raw = str(row.get("userphone") or "").strip()
+  phone_raw = str(row.get("user_phone") or "").strip()
+  if phone_raw.lower() in ["nan", "none", "null"]: phone_raw = ""
+
+  is_lid, clean_phone_digits = is_whatsapp_lid(phone_raw)
+
+  if is_lid:
+    if not sender_lid:
+      sender_lid = f"{clean_phone_digits}@lid"
+    real_phone_val = ""
+  else:
+    real_phone_val = phone_raw
+
   curr_score, curr_clean_digits = analyze_phone_quality(phone_raw)
-  internal_flag = get_internal_status(curr_clean_digits)
+  internal_flag = get_internal_status(curr_clean_digits) if curr_score >= 3 else ""
 
-  date_val = str(row.get("sentdate") or "").strip()
-  time_val = str(row.get("senttime") or "").strip()
+  date_val = str(row.get("sent_date") or "").strip()
+  time_val = str(row.get("sent_time") or "").strip()
 
   cleaned_body_fp = re.sub(r"\s+", "", body)
-  base_fingerprint = str(gusid) + "___" + str(cleaned_body_fp)
+  base_fingerprint = str(group_id_val) + "___" + str(cleaned_body_fp)
 
   current_time_obj = pd.to_datetime(str(date_val) + " " + str(time_val), errors="coerce", dayfirst=True)
 
@@ -704,10 +782,29 @@ for row in raw_db_rows:
           should_merge = False
 
       if should_merge:
-        if curr_score > old_score:
-          deduped_records_dict[old_key]["userPhone"] = phone_raw
-          deduped_records_dict[old_key]["phone_score"] = curr_score
-          deduped_records_dict[old_key]["phone_clean"] = curr_clean_digits
+        old_mid = str(deduped_records_dict[old_key].get("message_id") or "zzzzzz")
+        is_higher_score = curr_score > old_score
+        is_same_score_smaller_id = (curr_score == old_score) and bool(raw_mid) and (raw_mid < old_mid)
+
+        if is_higher_score or is_same_score_smaller_id:
+          if curr_score >= 3:
+            deduped_records_dict[old_key]["userPhone"] = phone_raw
+            deduped_records_dict[old_key]["phone_score"] = curr_score
+            deduped_records_dict[old_key]["phone_clean"] = curr_clean_digits
+          if raw_mid:
+            deduped_records_dict[old_key]["message_id"] = raw_mid
+          if inst_id:
+            deduped_records_dict[old_key]["instance_id"] = inst_id
+          if raw_ts:
+            deduped_records_dict[old_key]["raw_timestamp"] = raw_ts
+          if msg_type:
+            deduped_records_dict[old_key]["message_type"] = msg_type
+          if raw_caption:
+            deduped_records_dict[old_key]["media_caption"] = raw_caption
+
+        if sender_lid and not deduped_records_dict[old_key].get("sender_lid"):
+          deduped_records_dict[old_key]["sender_lid"] = sender_lid
+
         if internal_flag and not deduped_records_dict[old_key]["Internal"]:
           deduped_records_dict[old_key]["Internal"] = internal_flag
         is_merged = True
@@ -725,12 +822,19 @@ for row in raw_db_rows:
     base_should_ai = bool(b_hard_ev or b_form or q_hard_ev or q_form)
 
     record = {
+      "message_id": raw_mid,
+      "instance_id": inst_id,
+      "raw_timestamp": raw_ts,
+      "message_type": msg_type,
+      "media_caption": raw_caption,
+      "sender_lid": sender_lid,
+
       "Group": group_name,
-      "GroupID": gusid,
+      "GroupID": group_id_val,
       "Date": date_val,
       "Time": time_val,
       "time_obj": current_time_obj,
-      "userPhone": phone_raw,
+      "userPhone": real_phone_val,
       "phone_score": curr_score,
       "phone_clean": curr_clean_digits,
       "Internal": internal_flag,
@@ -873,6 +977,9 @@ print_stage_dashboard(
 # 🤖 6. 核心機制 2：候選閉環約束 (Candidate-Constrained Extraction)
 # ==========================================
 def request_poe_api(prompt_text):
+  if abort_event.is_set():
+    return ""
+
   if hasattr(poe_client, "responses") and hasattr(poe_client.responses, "create"):
     try:
       resp = poe_client.responses.create(model=POE_MODEL, input=prompt_text)
@@ -907,6 +1014,43 @@ def check_ai_service_health():
     print("🛑 系統已自動中止所有後續寫入流程！")
     print("!" * 65 + "\n")
     return False
+
+# ==========================================
+# 🛡️ 專項 AI 情緒糾錯協議 (零容忍非 P/N/I 輸出)
+# ==========================================
+def correct_sentiment_with_ai(body_text, brand_name, invalid_val, max_retries=2):
+  """
+  當 AI 輸出非法值 (如 '✓' 或 'true') 時，強制發起二次糾錯。
+  若仍無法輸出合法的 P/N/I，拋出異常觸發系統全局熔斷！
+  """
+  prompt = f"""# Task
+你剛才對留言中的品牌 [{brand_name}] 給予的情緒標籤為 "{invalid_val}"，這是嚴重非法的輸出！
+本系統嚴格只允許且必須輸出單一字母：
+- "P" (正面/讚賞)
+- "N" (負面/投訴/問題)
+- "I" (中立/客觀詢問/無評價)
+
+【目標留言 (Body)】:
+{body_text}
+
+請重新評估該留言對品牌 [{brand_name}] 的立場，【只能輸出純 JSON】：
+{{"sentiment": "P/N/I"}}
+"""
+  for attempt in range(max_retries):
+    try:
+      res_text = request_poe_api(prompt)
+      m = re.search(r'\{.*"sentiment"\s*:\s*"([PNI])".*\}', res_text, re.IGNORECASE | re.DOTALL)
+      if m:
+        clean_s = m.group(1).upper()
+        if clean_s in ["P", "N", "I"]:
+          print(f"\n🔄 [AI 自我糾錯成功] 品牌 [{brand_name}] 非法值 '{invalid_val}' 已被糾正為 '{clean_s}'")
+          with stats_lock:
+            stats["ai_corrections_triggered"] += 1
+          return clean_s
+    except Exception:
+      time.sleep(1)
+
+  raise ValueError(f"AI 無法對品牌 [{brand_name}] 產出合法的 P/N/I 標籤 (當前非法輸出: '{invalid_val}')，可能是 Token 耗盡或模型異常！")
 
 def call_llm_analysis(body_text, quoted_text, context_list, eligible_candidates_desc, max_retries=3):
   global consecutive_ai_failures
@@ -1059,6 +1203,7 @@ if total_ai_tasks > 0:
     for future in concurrent.futures.as_completed(futures):
       if abort_event.is_set():
         print("\n🛑 熔斷器已開啟，放棄剩餘任務，退出程式！")
+        executor.shutdown(wait=False, cancel_futures=True)
         sys.exit(1)
 
       record, success, is_spam, opinions, reply_origin = future.result()
@@ -1111,8 +1256,30 @@ if total_ai_tasks > 0:
 
           # 1. 處理 AI 成功分析出的 opinions (具備證據動態歸一化能力)
           for op in opinions:
-            raw_b_name = op.get("brand_name", "").strip()
-            s_val = op.get("sentiment", "I").strip()
+            if not isinstance(op, dict):
+              continue
+            raw_b_name = str(op.get("brand_name") or "").strip()
+            raw_sentiment = str(op.get("sentiment") or "").strip().upper()
+
+            if not raw_b_name or raw_b_name.lower() in ["none", "null"]:
+              continue
+
+            # 🛡️ 白名單校驗：只接受 P / N / I，非法值觸發一次專項糾錯，仍失敗則熔斷
+            if raw_sentiment in ["P", "N", "I"]:
+              s_val = raw_sentiment
+            else:
+              print(f"\n⚠️ 檢測到品牌 [{raw_b_name}] 的情緒值非法: '{raw_sentiment}'，正在調用 AI 進行糾錯...")
+              try:
+                s_val = correct_sentiment_with_ai(record["messageBody"], raw_b_name, raw_sentiment)
+              except Exception as err:
+                print("\n" + "!" * 70)
+                print("🚨 【系統致命熔斷】AI 情緒值校驗未通過！")
+                print(f"👉 報錯詳情: {str(err)}")
+                print("🛑 系統終止 (sys.exit(1))，已阻斷後續寫入！")
+                print("!" * 70 + "\n")
+                abort_event.set()
+                executor.shutdown(wait=False, cancel_futures=True)
+                sys.exit(1)
             resolved_col = ""
 
             # A. 若直接等於 35 個標準欄位名 (大小寫不敏感匹配)
@@ -1156,6 +1323,8 @@ if total_ai_tasks > 0:
             if resolved_col and resolved_col in STANDARD_BRANDS and allow_tag:
               record[resolved_col] = s_val
               standard_brand_hit = True
+              with stats_lock:
+                stats["brand_distribution"][resolved_col] = stats["brand_distribution"].get(resolved_col, 0) + 1
 
               for p_brand, sub_list in MASTER_BRAND_ROLLUP.items():
                 if resolved_col in sub_list or resolved_col == p_brand:
@@ -1277,55 +1446,62 @@ if not final_df.empty:
   full_48_df = final_df[FINAL_HEADERS_48].copy()
 
   # ── 7.1 寫入 Google Sheets ──
-  sheets_df = full_48_df.copy()
-  # 💡 強制統一為 YYYY-MM-DD，Google Sheets 100% 識別為日期，且永不混淆月份與日！
-  sheets_df["Date"] = sheets_df["Date"].apply(parse_hk_date_to_iso)
-  for text_col in ["messageBody", "quotedMessage", "reply"]:
-    sheets_df[text_col] = sheets_df[text_col].apply(escape_sheet_formula)
-
-  is_test_mode = bool(
-    TEST_TARGET_SHEET_URL 
-    and "your_test_sheet_id" not in TEST_TARGET_SHEET_URL 
-    and TEST_TARGET_SHEET_URL.strip().startswith("https://docs.google.com")
-  )
-
-  if is_test_mode:
-    print("\n🧪 【測試模式啟用】強制寫入指定測試 Sheet！")
-    print("👉 測試目標: TEST_TARGET_SHEET_URL (已設定)")
-    try:
-      sh = gc.open_by_url(TEST_TARGET_SHEET_URL)
-      worksheet = sh.worksheet(TEST_WORKSHEET_TAB)
-      append_to_google_sheet_safe(worksheet, sheets_df.values.tolist())
-      print("✅ [測試表] 成功寫入 %d 筆 48 欄測試數據到 【%s】！" % (len(sheets_df), TEST_WORKSHEET_TAB))
-    except Exception as e:
-      print("❌ [測試表] 寫入測試表格失敗:", str(e))
+  if not ENABLE_WRITE_SHEET:
+    print("\n🛑 [Google Sheets] WRITE_SHEET=false，已略過寫入。")
   else:
-    print("\n🚀 【生產模式】按日期動態分表寫入...")
-    sheets_df["TargetSheet"] = sheets_df["Date"].apply(get_target_sheet_name)
+    sheets_df = full_48_df.copy()
+    # 💡 強制統一為 YYYY-MM-DD，Google Sheets 100% 識別為日期，且永不混淆月份與日！
+    sheets_df["Date"] = sheets_df["Date"].apply(parse_hk_date_to_iso)
+    for text_col in ["messageBody", "quotedMessage", "reply"]:
+      sheets_df[text_col] = sheets_df[text_col].apply(escape_sheet_formula)
 
-    for sheet_name, group_df in sheets_df.groupby("TargetSheet"):
-      if sheet_name == "Unknown_Sheet":
-        continue
-      write_df = group_df.drop(columns=["TargetSheet"]).fillna("")
-      print("🔄 [Google Sheets] 正在寫入工作表 【" + sheet_name + "】 (" + str(len(write_df)) + " 筆資料)...")
+    is_test_mode = bool(
+      TEST_TARGET_SHEET_URL 
+      and "your_test_sheet_id" not in TEST_TARGET_SHEET_URL 
+      and TEST_TARGET_SHEET_URL.strip().startswith("https://docs.google.com")
+    )
+
+    if is_test_mode:
+      print("\n🧪 【測試模式啟用】強制寫入指定測試 Sheet！")
+      print("👉 測試目標: TEST_TARGET_SHEET_URL (已設定)")
       try:
-        sh = gc.open(sheet_name)
-        worksheet = sh.worksheet(MASTER_WORKSHEET_NAME)
-        append_to_google_sheet_safe(worksheet, write_df.values.tolist())
-        print("✅ [Google Sheets] 成功寫入 " + str(len(write_df)) + " 筆資料到 【" + sheet_name + "】！")
-      except gspread.exceptions.SpreadsheetNotFound:
-        print("❌ [Google Sheets] 找不到名為【" + sheet_name + "】的表格，請確認已共用給服務帳戶！")
+        sh = gc.open_by_url(TEST_TARGET_SHEET_URL)
+        worksheet = sh.worksheet(TEST_WORKSHEET_TAB)
+        append_to_google_sheet_safe(worksheet, sheets_df.values.tolist())
+        print("✅ [測試表] 成功寫入 %d 筆 48 欄測試數據到 【%s】！" % (len(sheets_df), TEST_WORKSHEET_TAB))
       except Exception as e:
-        print("❌ [Google Sheets] 寫入【" + sheet_name + "】失敗:", str(e))
+        print("❌ [測試表] 寫入測試表格失敗:", str(e))
+    else:
+      print("\n🚀 【生產模式】按日期動態分表寫入...")
+      sheets_df["TargetSheet"] = sheets_df["Date"].apply(get_target_sheet_name)
 
-  # ── 7.2 寫入 Supabase 全量表 (48 欄) ──
+      for sheet_name, group_df in sheets_df.groupby("TargetSheet"):
+        if sheet_name == "Unknown_Sheet":
+          continue
+        write_df = group_df.drop(columns=["TargetSheet"]).fillna("")
+        print("🔄 [Google Sheets] 正在寫入工作表 【" + sheet_name + "】 (" + str(len(write_df)) + " 筆資料)...")
+        try:
+          sh = gc.open(sheet_name)
+          worksheet = sh.worksheet(MASTER_WORKSHEET_NAME)
+          append_to_google_sheet_safe(worksheet, write_df.values.tolist())
+          print("✅ [Google Sheets] 成功寫入 " + str(len(write_df)) + " 筆資料到 【" + sheet_name + "】！")
+        except gspread.exceptions.SpreadsheetNotFound:
+          print("❌ [Google Sheets] 找不到名為【" + sheet_name + "】的表格，請確認已共用給服務帳戶！")
+        except Exception as e:
+          print("❌ [Google Sheets] 寫入【" + sheet_name + "】失敗:", str(e))
+
+  # ── 7.2 寫入 Supabase 全量表 (48 欄 + 訊息中繼欄位) ──
   supabase_host = SUPABASE_DB_CONFIG.get("host", "").strip()
   supabase_pw = SUPABASE_DB_CONFIG.get("password", "").strip()
 
-  if supabase_host and supabase_pw:
+  if not ENABLE_WRITE_DATABASE:
+    print("\n🛑 [Supabase] WRITE_DATABASE=false，已略過寫入。")
+  elif supabase_host and supabase_pw:
     print("\n⚡ [Supabase] 正在批次寫入全量表 【" + SUPABASE_FULL_TABLE + "】...")
     try:
+      # 需要 message_id 有 UNIQUE 約束，重複訊息以 ON CONFLICT DO NOTHING 略過
       db_cols = [
+        'message_id', 'instance_id', 'raw_timestamp', 'message_type', 'media_caption', 'sender_lid',
         '"Group"', '"GroupID"', '"Date"', '"Time"', '"userPhone"', '"Internal"',
         '"quotedMessage"', '"messageBody"', '"reply"', '"brand"', '"keywords"', '"warning"',
         '"Abbott"', '"Similac HMO"', '"Similac Comfort"', '"Abbott PediaSure"',
@@ -1341,19 +1517,36 @@ if not final_df.empty:
       ]
 
       insert_rows = []
-      for _, r in full_48_df.iterrows():
-        d_val = str(r["Date"]).strip()
+      missing_id_count = 0
+      for r in cleaned_records:
+        m_id = str(r.get("message_id") or "").strip()
+        if not m_id:
+          missing_id_count += 1
+          continue
+
+        d_val = str(r.get("Date") or "").strip()
         date_str = parse_hk_date_to_iso(d_val)
 
-        t_val = str(r["Time"]).strip()
+        t_val = str(r.get("Time") or "").strip()
         time_str = t_val if re.match(r"^\d{1,2}:\d{2}(:\d{2})?$", t_val) else None
 
+        # LID 設備號或不足 8 位的號碼不寫入 userPhone
+        raw_phone = str(r.get("userPhone") or "").strip()
+        is_lid_p, clean_p_digits = is_whatsapp_lid(raw_phone)
+        safe_user_phone = None if (is_lid_p or not clean_p_digits or len(clean_p_digits) < 8) else raw_phone
+
         row_tuple = (
+          m_id,
+          r.get("instance_id") or None,
+          to_epoch_int(r.get("raw_timestamp")),
+          r.get("message_type") or None,
+          r.get("media_caption") or None,
+          r.get("sender_lid") or None,
           r.get("Group") or None,
           r.get("GroupID") or None,
           date_str,
           time_str,
-          r.get("userPhone") or None,
+          safe_user_phone,
           r.get("Internal") or None,
           r.get("quotedMessage") or None,
           r.get("messageBody") or None,
@@ -1400,14 +1593,24 @@ if not final_df.empty:
         )
         insert_rows.append(row_tuple)
 
+      if missing_id_count:
+        print("⚠️ [Supabase] %d 筆記錄缺少 message_id，已略過寫入並計入略過筆數。" % missing_id_count)
+        stats["db_skipped_count"] = missing_id_count
+
       if insert_rows:
         sp_conn = psycopg2.connect(**SUPABASE_DB_CONFIG)
         with sp_conn.cursor() as cur:
-          insert_query = "INSERT INTO public." + SUPABASE_FULL_TABLE + " (" + ", ".join(db_cols) + ") VALUES %s;"
-          execute_values(cur, insert_query, insert_rows, page_size=1000)
+          table_ident = sql.Identifier("public", SUPABASE_FULL_TABLE).as_string(cur)
+          insert_query = "INSERT INTO " + table_ident + " (" + ", ".join(db_cols) + ") VALUES %s ON CONFLICT (message_id) DO NOTHING RETURNING message_id;"
+          # fetch=True 會彙總所有分頁的 RETURNING 結果 (rowcount 只反映最後一頁)
+          inserted = execute_values(cur, insert_query, insert_rows, page_size=1000, fetch=True)
           sp_conn.commit()
         sp_conn.close()
-        print("✅ [Supabase] 成功批次寫入 %d 筆 48 欄資料到 【%s】！" % (len(insert_rows), SUPABASE_FULL_TABLE))
+
+        stats["db_inserted_count"] = len(inserted)
+        stats["db_skipped_count"] = len(insert_rows) - len(inserted) + missing_id_count
+        print("✅ [Supabase] 寫入完成！新入庫: %d 筆，重複略過: %d 筆 (表: 【%s】)" % (
+          stats["db_inserted_count"], stats["db_skipped_count"], SUPABASE_FULL_TABLE))
     except Exception as e:
       print("❌ [Supabase] 寫入全量表失敗:", str(e))
   else:
@@ -1433,6 +1636,10 @@ print_stage_dashboard(
     "🔗 成功關聯前文數": "%d 行 (有效 reply 溯源)" % stats["context_attributed_count"],
     "🍼 泛育兒(無品牌)數": "%d 行" % stats["generic_no_brand"],
     "🗑️ 標記為 Spam 垃圾數": "%d 行" % stats["spam_detected"],
-    "📝 最終寫入總筆數": "%d 行" % len(final_df)
+    "🛡️ AI 非法情緒糾錯數": "%d 次" % stats["ai_corrections_triggered"],
+    "⚡ Supabase 新入庫": "%d 行" % stats["db_inserted_count"],
+    "🔁 Supabase 重複略過": "%d 行" % stats["db_skipped_count"],
+    "📝 最終寫入總筆數": "%d 行" % len(final_df),
+    "📊 本批次品牌命中分佈": stats["brand_distribution"] or "無"
   }
 )

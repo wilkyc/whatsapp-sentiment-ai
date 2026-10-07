@@ -5,6 +5,7 @@
 # read from environment variables. No real defaults are committed.
 # See .env.example for the full list of variables.
 # ==========================================
+import json
 import os
 import re
 
@@ -98,6 +99,47 @@ _IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)?$")
 SOURCE_VIEW = _env("SOURCE_VIEW") or "public.messages_view"
 if not _IDENT_RE.match(SOURCE_VIEW):
   raise ValueError("SOURCE_VIEW must look like 'schema.name' or 'name' (letters, digits, underscore)")
+
+# 來源欄位映射：內部中性 key -> 來源 view 的實際欄位名。預設值即中性 key 本身；
+# 可用環境變數 SOURCE_COLUMN_MAP (JSON，只需列出要覆蓋的 key) 覆蓋。
+# 欄位名只接受合法識別符，SQL 中以 psycopg2.sql.Identifier 引用並以 AS 別名統一成內部 key。
+SOURCE_COLUMN_KEYS = [
+  "message_id", "instance_id", "message_ts", "message_type", "sender_lid",
+  "group_name", "group_id", "sent_date", "sent_time", "user_phone",
+  "message_body", "media_caption", "quoted_message",
+]
+_COL_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _load_source_column_map():
+  mapping = {k: k for k in SOURCE_COLUMN_KEYS}
+  raw = _env("SOURCE_COLUMN_MAP")
+  if raw:
+    try:
+      override = json.loads(raw)
+    except ValueError as e:
+      raise ValueError("SOURCE_COLUMN_MAP must be a JSON object: %s" % e)
+    if not isinstance(override, dict):
+      raise ValueError("SOURCE_COLUMN_MAP must be a JSON object")
+    for k, v in override.items():
+      if k not in mapping:
+        raise ValueError("SOURCE_COLUMN_MAP: unknown key '%s'" % k)
+      mapping[k] = str(v)
+  for k, v in mapping.items():
+    if not _COL_RE.match(v):
+      raise ValueError("SOURCE_COLUMN_MAP: invalid column name for '%s'" % k)
+  return mapping
+
+
+SOURCE_COLUMN_MAP = _load_source_column_map()
+
+# 可自訂哪些 13 位號碼視為真實電話 (正則，對純數字做 fullmatch)。
+# 預設為空：所有 13 位純數字一律視為 WhatsApp 設備 LID。
+VALID_PHONE_13_REGEX = _env("VALID_PHONE_13_REGEX")
+try:
+  VALID_PHONE_13_RE = re.compile(VALID_PHONE_13_REGEX) if VALID_PHONE_13_REGEX else None
+except re.error as e:
+  raise ValueError("VALID_PHONE_13_REGEX is not a valid regular expression: %s" % e)
 DB_CONFIG = {
   "host": _env("DB_HOST"),
   "port": _env_int("DB_PORT", 5432),
