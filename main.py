@@ -26,6 +26,7 @@ from config import (
   SOURCE_VIEW,
   SOURCE_COLUMN_KEYS,
   SOURCE_COLUMN_MAP,
+  VALID_PHONE_13_RE,
   SUPABASE_DB_CONFIG,
   SUPABASE_FULL_TABLE,
   INTERNAL_PHONES_JSON,
@@ -504,7 +505,7 @@ def is_whatsapp_lid(phone_raw):
     return True, clean_digits
 
   if len(clean_digits) == 13:
-    if not re.match(r"^861[3-9]\d{9}$", clean_digits):
+    if not (VALID_PHONE_13_RE and VALID_PHONE_13_RE.fullmatch(clean_digits)):
       return True, clean_digits
 
   return False, clean_digits

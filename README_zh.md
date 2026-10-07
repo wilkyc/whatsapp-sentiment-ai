@@ -127,7 +127,8 @@ https://github.com/user-attachments/assets/2c191493-7525-4425-b3ee-d2e9db2a7130
 | `DB_HOST`、`DB_NAME`、`DB_USER`、`DB_PASSWORD` | ✅ | 來源 PostgreSQL（WhatsApp 訊息庫） |
 | `DB_PORT` | 選填 | 預設 `5432` |
 | `SOURCE_VIEW` | 選填 | 讀取訊息的來源 view／表名（`schema.name` 或 `name`，只限字母、數字、底線；會做格式驗證並以 SQL 識別符引用），預設 `public.messages_view` |
-| `SOURCE_COLUMN_MAP` | 選填 | JSON 物件，把內部欄位 key 對應到來源 view 的實際欄位名（只需列出要覆蓋的 key，例如 `{"sent_date": "msg_date"}`）。預設為中性的內部 key；欄位名會做格式驗證並以 SQL 識別符引用 |
+| `SOURCE_COLUMN_MAP` | 選填（JSON） | JSON 物件，把內部欄位 key 對應到來源 view 的實際欄位名（只需列出要覆蓋的 key，例如 `{"sent_date": "msg_date"}`）。預設為中性的內部 key；欄位名會做格式驗證並以 SQL 識別符引用 |
+| `VALID_PHONE_13_REGEX` | 選填 | 可自訂哪些 13 位號碼視為真實電話的正則（對純數字整串比對）。留空 = 所有 13 位號碼一律視為設備 LID；正則無效時會直接報錯停止 |
 | `KEYWORDS_SPREADSHEET_ID` 或 `KEYWORDS_SHEET_URL` | ✅（二選一） | 含 `brand_keywords` / `ift_keywords` 分頁的關鍵詞表（分頁名可用 `BRAND_SHEET_NAME` / `IFT_SHEET_NAME` 覆蓋） |
 | `GROUPINFO_SHEET_URL` | ✅ | 含 `groups` 分頁的試算表（群組 ID → 名稱） |
 | `SUPABASE_DB_HOST`、`SUPABASE_DB_USER`、`SUPABASE_DB_PASSWORD` | 寫入 Supabase 時 | Supabase Session Pooler；host 或密碼為空時自動略過 |

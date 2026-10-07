@@ -132,6 +132,14 @@ def _load_source_column_map():
 
 
 SOURCE_COLUMN_MAP = _load_source_column_map()
+
+# 可自訂哪些 13 位號碼視為真實電話 (正則，對純數字做 fullmatch)。
+# 預設為空：所有 13 位純數字一律視為 WhatsApp 設備 LID。
+VALID_PHONE_13_REGEX = _env("VALID_PHONE_13_REGEX")
+try:
+  VALID_PHONE_13_RE = re.compile(VALID_PHONE_13_REGEX) if VALID_PHONE_13_REGEX else None
+except re.error as e:
+  raise ValueError("VALID_PHONE_13_REGEX is not a valid regular expression: %s" % e)
 DB_CONFIG = {
   "host": _env("DB_HOST"),
   "port": _env_int("DB_PORT", 5432),

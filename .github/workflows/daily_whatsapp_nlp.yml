@@ -75,6 +75,8 @@ jobs:
           DB_USER: ${{ secrets.DB_USER }}
           DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
           SOURCE_VIEW: ${{ secrets.SOURCE_VIEW }}
+          SOURCE_COLUMN_MAP: ${{ secrets.SOURCE_COLUMN_MAP }}
+          VALID_PHONE_13_REGEX: ${{ secrets.VALID_PHONE_13_REGEX }}
           POE_API_KEY: ${{ secrets.POE_API_KEY }}
           SUPABASE_DB_HOST: ${{ secrets.SUPABASE_DB_HOST }}
           SUPABASE_DB_PORT: ${{ secrets.SUPABASE_DB_PORT }}

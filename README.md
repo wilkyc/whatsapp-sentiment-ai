@@ -127,7 +127,8 @@ The keyword rules are not tuned by hand. A separate **Keyword Agent** reviews th
 | `DB_HOST`, `DB_NAME`, `DB_USER`, `DB_PASSWORD` | ✅ | Source PostgreSQL (WhatsApp message store) |
 | `DB_PORT` | optional | Defaults to `5432` |
 | `SOURCE_VIEW` | optional | Source view / table to read messages from (`schema.name` or `name`, letters/digits/underscore only; validated and quoted as an SQL identifier). Defaults to `public.messages_view` |
-| `SOURCE_COLUMN_MAP` | optional | JSON object mapping internal column keys to the source view's column names (only keys to override, e.g. `{"sent_date": "msg_date"}`). Defaults to the neutral internal keys; names are validated and quoted as SQL identifiers |
+| `SOURCE_COLUMN_MAP` | optional (JSON) | JSON object mapping internal column keys to the source view's column names (only keys to override, e.g. `{"sent_date": "msg_date"}`). Defaults to the neutral internal keys; names are validated and quoted as SQL identifiers |
+| `VALID_PHONE_13_REGEX` | optional | Regex to customise which 13-digit numbers count as real phone numbers (full match on digits). Empty = all 13-digit numbers are treated as device LIDs; an invalid regex stops the run with an error |
 | `KEYWORDS_SPREADSHEET_ID` or `KEYWORDS_SHEET_URL` | ✅ (one of) | Sheet with `brand_keywords` / `ift_keywords` tabs (tab names overridable via `BRAND_SHEET_NAME` / `IFT_SHEET_NAME`) |
 | `GROUPINFO_SHEET_URL` | ✅ | Sheet with `groups` tab (group ID → name) |
 | `SUPABASE_DB_HOST`, `SUPABASE_DB_USER`, `SUPABASE_DB_PASSWORD` | for Supabase | Supabase session pooler; write is skipped if host/password is empty |
