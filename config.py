@@ -25,47 +25,52 @@ def _sheet_id_from_url(url):
   return m.group(1) if m else ""
 
 
-# 🍼 35 個核心標準監控項 (Product Short 表頭標準)
+# 🍼 核心標準監控項 (Product Short 表頭；母品牌欄名帶 Master Brand)
 PRODUCT_SHORT_BRANDS = [
   # 1. Abbott 體系
-  "Abbott", "Similac HMO", "Similac Comfort", "Abbott PediaSure",
+  "Abbott Master Brand", "Similac HMO", "Similac Comfort", "Abbott PediaSure",
   # 2. Aptamil 體系
-  "Aptamil", "Apta APF", "Apta NEO", "Apta PHP",
+  "Aptamil Master Brand", "Apta APF", "Apta NEO", "Apta PHP",
   # 3. Cow & Gate
-  "C&G",
+  "C&G Master Brand",
   # 4. Friso 體系
-  "Friso", "Friso Gold", "Friso Prestige", "Friso Bio", "Friso Signature", "Friso Kids",
+  "Friso Master Brand", "Friso Gold", "Friso Prestige", "Friso Bio", "Friso Signature", "Friso Kids",
   # 5. HiPP
-  "HiPP",
+  "HiPP Master Brand",
   # 6. Illuma 體系
-  "Illuma", "Illuma Luxa", "Illuma Organic", "Illuma A2", "Illuma XtraCare",
+  "Illuma Master Brand", "Illuma Luxa", "Illuma Organic", "Illuma A2", "Illuma XtraCare",
   # 7. Mead Johnson (MJ) 體系
-  "MJ", "Enfinitas", "MJ A+", "MJ NeuroPro", "MJ Gentle Care", "MJ NutriPower",
+  "MJ Master Brand", "Enfinitas", "MJ A+", "MJ NeuroPro", "MJ Gentle Care", "MJ NutriPower",
   # 8. Nestlé 體系
-  "Nestle", "NAN HA", "NAN Infini Pro", "NAN A2",
+  "Nestle Master Brand", "NAN HA", "NAN Infini Pro", "NAN A2",
   # 9. Wyeth 體系
-  "Wyeth", "S26 Ultima", "S26 Gold", "Wyeth Ascenda"
+  "Wyeth Master Brand", "S26 Ultima", "S26 Gold", "Wyeth Ascenda"
 ]
 
 # 🌳 母子品牌自動向上匯總 (Rollup) 映射字典
 MASTER_BRAND_ROLLUP = {
-  "Abbott": ["Similac HMO", "Similac Comfort", "Abbott PediaSure"],
-  "Aptamil": ["Apta APF", "Apta NEO", "Apta PHP"],
-  "Friso": ["Friso Gold", "Friso Prestige", "Friso Bio", "Friso Signature", "Friso Kids"],
-  "Illuma": ["Illuma Luxa", "Illuma Organic", "Illuma A2", "Illuma XtraCare"],
-  "MJ": ["Enfinitas", "MJ A+", "MJ NeuroPro", "MJ Gentle Care", "MJ NutriPower"],
-  "Nestle": ["NAN HA", "NAN Infini Pro", "NAN A2"],
-  "Wyeth": ["S26 Ultima", "S26 Gold", "Wyeth Ascenda"]
+  "Abbott Master Brand": ["Similac HMO", "Similac Comfort", "Abbott PediaSure"],
+  "Aptamil Master Brand": ["Apta APF", "Apta NEO", "Apta PHP"],
+  "Friso Master Brand": ["Friso Gold", "Friso Prestige", "Friso Bio", "Friso Signature", "Friso Kids"],
+  "Illuma Master Brand": ["Illuma Luxa", "Illuma Organic", "Illuma A2", "Illuma XtraCare"],
+  "MJ Master Brand": ["Enfinitas", "MJ A+", "MJ NeuroPro", "MJ Gentle Care", "MJ NutriPower"],
+  "Nestle Master Brand": ["NAN HA", "NAN Infini Pro", "NAN A2"],
+  "Wyeth Master Brand": ["S26 Ultima", "S26 Gold", "Wyeth Ascenda"]
 }
 
-# 📝 48 個全量欄位標準格式 (reply 在 messageBody 後，brand 之前)
+# 📝 全量欄位：原有訊息欄 + 關鍵詞拆欄 + 話題輪次，再接標準品牌欄與 Other_Brands
 FINAL_HEADERS_48 = (
   ["Group", "GroupID", "Date", "Time", "userPhone", "Internal",
-   "quotedMessage", "messageBody", "reply", "brand", "keywords", "warning"]
+   "quotedMessage", "messageBody", "reply", "brand", "keywords",
+   "keyword_Brand", "keyword_IFT", "keyword_Other", "brand_Dialogue", "warning"]
   + PRODUCT_SHORT_BRANDS
   + ["Other_Brands"]
 )
 FINAL_HEADERS_31 = FINAL_HEADERS_48  # 向下相容歷史別名
+
+# 話題輪次：自發起起的最長時間，以及連續無關訊息的上限
+DIALOGUE_MAX_LIFESPAN_MINUTES = 30
+DIALOGUE_MAX_IDLE_MESSAGES = 10
 
 # 🌐 上下文推斷與風控參數
 ENABLE_CONTEXTUAL_ALIAS = True          # 跨引用短稱解析開關
@@ -159,17 +164,17 @@ SUPABASE_DB_CONFIG = {
 SUPABASE_FULL_TABLE = "message_full"
 
 # 📊 Dashboard 設定 (used by dashboard.py, derived from the 35 standard columns)
-FRISO_MAIN = "Friso"
-FRISO_SUB_BRANDS = MASTER_BRAND_ROLLUP["Friso"]
+FRISO_MAIN = "Friso Master Brand"
+FRISO_SUB_BRANDS = MASTER_BRAND_ROLLUP["Friso Master Brand"]
 BRAND_MAPPING = {
-  "Abbott": ["Abbott"] + MASTER_BRAND_ROLLUP["Abbott"],
-  "Aptamil": ["Aptamil"] + MASTER_BRAND_ROLLUP["Aptamil"],
-  "Cow & Gate": ["C&G"],
-  "HiPP": ["HiPP"],
-  "Illuma": ["Illuma"] + MASTER_BRAND_ROLLUP["Illuma"],
-  "Mead Johnson": ["MJ"] + MASTER_BRAND_ROLLUP["MJ"],
-  "Nestle": ["Nestle"] + MASTER_BRAND_ROLLUP["Nestle"],
-  "Wyeth": ["Wyeth"] + MASTER_BRAND_ROLLUP["Wyeth"],
+  "Abbott": ["Abbott Master Brand"] + MASTER_BRAND_ROLLUP["Abbott Master Brand"],
+  "Aptamil": ["Aptamil Master Brand"] + MASTER_BRAND_ROLLUP["Aptamil Master Brand"],
+  "Cow & Gate": ["C&G Master Brand"],
+  "HiPP": ["HiPP Master Brand"],
+  "Illuma": ["Illuma Master Brand"] + MASTER_BRAND_ROLLUP["Illuma Master Brand"],
+  "Mead Johnson": ["MJ Master Brand"] + MASTER_BRAND_ROLLUP["MJ Master Brand"],
+  "Nestle": ["Nestle Master Brand"] + MASTER_BRAND_ROLLUP["Nestle Master Brand"],
+  "Wyeth": ["Wyeth Master Brand"] + MASTER_BRAND_ROLLUP["Wyeth Master Brand"],
 }
 
 # ==========================================

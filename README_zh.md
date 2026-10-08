@@ -11,12 +11,14 @@
 本專案展示了如何將 **生成式 AI（系統一：Gemini 3.8 Flash；系統二：`gemini-3.1-flash-lite`）** 與 **Google Cloud Platform (GCP) 雲端架構** 實際落地於日常商業營運。全套解決方案包含兩大互補的核心系統：
 
 1. **🤖 WhatsApp 多模態 AI 營運小幫手（即時互動）**：部署於 GCP 雲端的智慧營運助理。團隊非技術同仁只需透過日常 WhatsApp 對話，即可直接以自然語言查詢資料庫、解析多格式文件與圖片，並一鍵產出實體報表或寄送 Email。
-2. **📊 WhatsApp 社群輿情與 NLP 數據管線（批次處理）**：以 GitHub Actions 驅動、手動觸發（workflow_dispatch）的數據管線，抽取指定時段（預設為最近 65 分鐘）的 WhatsApp 群組訊息，完成去重與關鍵詞篩選後，交由具上下文理解的 LLM 進行品牌情緒分類，並將 48 欄標準化數據雙軌寫入 Google Sheets 與 Supabase，供儀表板及負面輿情警報使用。
+2. **📊 WhatsApp 社群輿情與 NLP 數據管線（批次處理）**：以 GitHub Actions 驅動、手動觸發（workflow_dispatch）的數據管線，抽取指定時段（預設為最近 65 分鐘）的 WhatsApp 群組訊息，完成去重與候選預篩後，交由具上下文理解的 LLM 進行品牌情緒分類，並將 52 欄標準化數據雙軌寫入 Google Sheets 與 Supabase，供儀表板及負面輿情警報使用。
 
 ---
 
 ## 🤖 系統一：WhatsApp 多模態 AI 營運小幫手
-> 系統一的源碼沒有收錄在本儲存庫，僅以示範影片及下方架構圖展示。
+> 系統一是展示。`system1/whatsapp-webhook-publisher.py` 是接收端，`system1/whatsapp-ai-worker.py` 是處理端，兩者分開；這裡不提供部署步驟。示範影片與下方架構圖仍是操作說明。
+>
+> 接收端與處理端分開。工具呼叫輪數由程式手動控制，較重的工具在同一次請求裡只回一次進度提示。
 >
 > **歸屬說明：** WhatsApp 訊息接入通道由公司提供；其餘應用程式代碼均由本人編寫。
 
@@ -84,8 +86,8 @@ https://github.com/user-attachments/assets/2c191493-7525-4425-b3ee-d2e9db2a7130
 
 ![系統二流程圖](assets/pipeline-system2-zh.jpg)
 
-#### 🔁 關鍵詞自我迭代正循環
-關鍵詞規則不是靠人手調整的。一個獨立的 **Keyword Agent** 會檢查 Pipeline 的分析結果，找出漏判和誤判，然後更新規則。下一輪運行會自動使用新規則，所以每跑一輪，準確度都會提升。
+#### 🔁 候選預篩會隨結果再調整
+候選預篩不是只靠人手改一次。管線結果會用來找出漏判和誤判，並更新預篩規則，下一輪運行使用更新後的規則。
 
 ![關鍵詞正循環](assets/keyword-loop-zh.png)
 
@@ -98,9 +100,10 @@ https://github.com/user-attachments/assets/2c191493-7525-4425-b3ee-d2e9db2a7130
 * **🛡️ 防 AI 腦補機制：** 透過提示詞規則與 Few-shot 範例，禁止模型憑通用成分（如 DHA、水解）猜測品牌、誤判教育用語「A+」，或將代名詞關聯到前文從未出現的品牌；轉讓、代儲分、促銷轉發等訊息自動判為 Spam。
 * **🧩 上下文短稱解析：** 單獨出現時有歧義的產品短稱（如只提子品牌名、未提母品牌的 `COMBO` 規則），只有在上下文能確認時才計入：引用訊息提到母品牌、同群組 30 分鐘內前文提過母品牌，或緊鄰上一條發言明確在談奶粉。
 * **🔗 回覆溯源 (reply)：** 當訊息是回應前文時，Python 會把模型輸出的 `reply_origin` 與上下文逐句比對，還原完整原句（保留 Emoji），寫入 `reply` 欄位。
-* **🏷️ 品牌歸併與警示：** 子品牌情緒依 N > P > I 優先順序自動歸併至母品牌欄位（`MASTER_BRAND_ROLLUP`）；若訊息明確寫出品牌但 AI 漏標，會以字面匹配保底標記為 `I`；核心品牌出現負面評價時於 `warning` 欄標記，方便客服／公關跟進。
+* **🧵 話題輪次 (`brand_Dialogue`)：** 同一群組、同一母品牌代碼的連續討論會共用一個話題編號。話題自第一則品牌發言起最長 30 分鐘；連續 10 則沒有品牌或配方預篩命中的訊息會結束該話題。判定為垃圾的訊息不進入話題。
+* **🏷️ 母品牌欄與警示：** 母品牌欄位名稱帶有 `Master Brand`。子品牌有標、且正文沒有另外點名母品牌時，母品牌欄會清空，不會把子系列情緒抄上去；正文同時獨立點名母品牌時才保留母品牌自己的情緒。若訊息明確寫出品牌但 AI 漏標，會以字面匹配保底標記為 `I`。母品牌欄本身為負面時，`warning` 欄才做標記。
 * **🚦 熔斷保護：** 批次開始前先檢測 AI 服務狀態，運行中連續 5 次 LLM 失敗（如 API 額度耗盡）即中止任務，避免寫入半成品數據。若 LLM 回傳 `P`／`N`／`I` 以外的情緒值，會以專項糾錯提示重問一次；仍失敗則在寫入前終止任務，並取消排隊中的 AI 任務。
-* **💾 雙軌寫入：** 固定 48 欄格式（12 個訊息欄位 + 35 個品牌欄位 + `Other_Brands`），按半月分表寫入 Google Sheets（`yymm_DailyData_Part1` = 1–15 日，`Part2` = 16 日至月底），內建公式注入防護與 429 限流指數退避重試；同時批次寫入 Supabase `message_full` 表，並附帶基本訊息中繼資料。重複訊息自動略過，運行摘要會列出新入庫與略過的筆數。可用 `write_sheet`／`write_database` 表單選項逐次關閉個別寫入目標。日期一律以「日優先」解析並統一為 `YYYY-MM-DD`，`02/10/2026` 不會被誤讀為 2 月 10 日。另設測試表模式，避免污染正式數據。
+* **💾 雙軌寫入：** 固定 52 欄格式（16 個訊息欄位 + 35 個品牌欄位 + `Other_Brands`）。訊息欄含原本的回覆、品牌旗標、合併關鍵詞，以及拆開的 `keyword_Brand`／`keyword_IFT`／`keyword_Other` 和話題編號 `brand_Dialogue`。按半月分表寫入 Google Sheets（`yymm_DailyData_Part1` = 1–15 日，`Part2` = 16 日至月底），內建公式注入防護與 429 限流指數退避重試；同時批次寫入 Supabase `message_full` 表，並附帶基本訊息中繼資料。重複訊息自動略過，運行摘要會列出新入庫與略過的筆數。可用 `write_sheet`／`write_database` 表單選項逐次關閉個別寫入目標。日期一律以「日優先」解析並統一為 `YYYY-MM-DD`，`02/10/2026` 不會被誤讀為 2 月 10 日。另設測試表模式，避免污染正式數據。引用裡的情緒不會直接抄到正文：正文自己有品牌就只評正文；正文沒有品牌時，才可以沿用引用正在討論的品牌，但立場仍看正文。
 * **🔁 增量運行與重跑：** 手動觸發（workflow_dispatch）。未指定日期時處理香港時間最近 65 分鐘的訊息，增量窗口比運行間隔多 5 分鐘以防漏。並以並發鎖排隊，確保兩個任務不會同時寫入。可於 Workflow 表單輸入 `target_date` 重跑：單日（`260928` 或 `2026-09-28`）、跨日範圍（`2026-07-01 to 2026-09-30`、`260701-260930`）或精確時段（`260928 14:00-16:00`，或日期加上獨立的 `time_start`／`time_end` 欄位，例如 `9:00` 自動補成 `09:00:00`）。
 * **📱 WhatsApp LID 處理：** 識別 WhatsApp 設備 LID，存入 `sender_lid`，不會當作真實 `userPhone` 寫入；圖片／影片如有說明文字會一併分析。
 * **📊 運行摘要：** 最終日誌摘要包含情緒糾錯次數與本批次各品牌命中分佈。
@@ -108,7 +111,8 @@ https://github.com/user-attachments/assets/2c191493-7525-4425-b3ee-d2e9db2a7130
 
 ### 🧰 配套腳本
 
-* `dashboard.py`：將單日 DailyData 匯總至每月 Google Sheets 儀表板（觸及量、群組分類、品牌情緒統計），需另行以 `--dashboard_id` 執行。
+* `dashboard.py`：將單日 DailyData 匯總至每月 Google Sheets 儀表板（觸及量、群組分類、品牌情緒統計），需另行以 `--dashboard_id` 執行。母品牌欄位讀的是 `Friso Master Brand`。
+* `universal_sentiment_repair.py` 與 `.github/workflows/sentiment_repair.yml`：手動觸發（workflow_dispatch）。可只重算「引用與正文品牌不一致」的列，或重算指定日期裡有候選命中的列；預設只演練不寫入，表單需輸入 `yes` 才會執行。
 * `scripts/email_automation/` 與 `docs/MANUS_EMAIL_AUTOMATION.md`：由 Manus AI 排程執行的每日摘要郵件與負面輿情警報。
 
 ### 🚀 安裝與設定 (Setup)
@@ -138,7 +142,7 @@ https://github.com/user-attachments/assets/2c191493-7525-4425-b3ee-d2e9db2a7130
 
 觸發方式：手動觸發（workflow_dispatch），於 **Actions → WhatsApp Data NLP Pipeline → Run workflow** 執行（可選填 `target_date`、`time_start`、`time_end`、`target_group_ids`，以及 `write_sheet`／`write_database` 勾選項）。
 
-**Supabase 遷移說明（已有 `message_full` 表時）：** 寫入時會多寫 6 個訊息中繼欄位，且 `message_id` 必須唯一，重複訊息才能自動略過。
+**Supabase 遷移說明（已有 `message_full` 表時）：** 寫入時會多寫 6 個訊息中繼欄位，且 `message_id` 必須唯一，重複訊息才能自動略過。母品牌欄名現為 `Abbott Master Brand` 這類名稱（不再是 `Friso`、`Abbott` 這種短名）。另外需要四個 TEXT 欄：`keyword_Brand`、`keyword_IFT`、`keyword_Other`、`brand_Dialogue`。
 
 | 欄位 | 型別 |
 | :--- | :--- |

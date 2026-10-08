@@ -13,6 +13,9 @@ from config import (
   FINAL_HEADERS_48,
   ENABLE_CONTEXTUAL_ALIAS,
   CONTEXT_HISTORY_MAX_MINUTES,
+  DIALOGUE_MAX_LIFESPAN_MINUTES,
+  DIALOGUE_MAX_IDLE_MESSAGES,
+  FRISO_MAIN,
   TARGET_GROUP_IDS,
   CONTEXT_ONLY_TAGGING,
   KEYWORDS_SPREADSHEET_ID,
@@ -91,6 +94,7 @@ poe_client = openai.OpenAI(
   api_key=POE_API_KEY,
   base_url="https://api.poe.com/v1",
 )
+http_session = requests.Session()
 
 # 內部號碼清單 (從環境變數或本地 gitignored 檔案載入，公開 repo 不含任何真實號碼)
 # 格式: {"Apta": ["9xxxxxxx", ...], "Admin": [...], "Friso": [...]}
@@ -145,7 +149,8 @@ stats = {
   "ai_corrections_triggered": 0,
   "brand_distribution": {},
   "db_inserted_count": 0,
-  "db_skipped_count": 0
+  "db_skipped_count": 0,
+  "dialogues_created_count": 0
 }
 
 def print_stage_dashboard(stage_name, metrics):
@@ -229,43 +234,43 @@ for _, row in groupinfo_df.iterrows():
     group_map[gid] = gname
 
 CODE_TO_COLUMN_MAP = {
-  ("abbott", "master"): "Abbott",
+  ("abbott", "master"): "Abbott Master Brand",
   ("abbott", "similac_hmo"): "Similac HMO",
   ("abbott", "similac_comfort"): "Similac Comfort",
   ("abbott", "pediasure"): "Abbott PediaSure",
-  ("aptamil", "master"): "Aptamil",
+  ("aptamil", "master"): "Aptamil Master Brand",
   ("aptamil", "apf"): "Apta APF",
   ("aptamil", "neo"): "Apta NEO",
   ("aptamil", "php"): "Apta PHP",
-  ("aptamil", "essensis"): "Aptamil",
-  ("cow & gate", "master"): "C&G",
-  ("cow & gate", "a2_beta_casein"): "C&G",
-  ("friso", "master"): "Friso",
+  ("aptamil", "essensis"): "Aptamil Master Brand",
+  ("cow & gate", "master"): "C&G Master Brand",
+  ("cow & gate", "a2_beta_casein"): "C&G Master Brand",
+  ("friso", "master"): "Friso Master Brand",
   ("friso", "gold"): "Friso Gold",
   ("friso", "prestige"): "Friso Prestige",
   ("friso", "bio"): "Friso Bio",
   ("friso", "signature"): "Friso Signature",
   ("friso", "kids"): "Friso Kids",
-  ("hipp", "master"): "HiPP",
-  ("hipp", "hmp"): "HiPP",
-  ("illuma", "master"): "Illuma",
+  ("hipp", "master"): "HiPP Master Brand",
+  ("hipp", "hmp"): "HiPP Master Brand",
+  ("illuma", "master"): "Illuma Master Brand",
   ("illuma", "luxa"): "Illuma Luxa",
   ("illuma", "organic"): "Illuma Organic",
   ("illuma", "a2"): "Illuma A2",
   ("illuma", "xtracare"): "Illuma XtraCare",
-  ("mjn", "master"): "MJ",
+  ("mjn", "master"): "MJ Master Brand",
   ("mjn", "enfinitas"): "Enfinitas",
   ("mjn", "a_plus"): "MJ A+",
   ("mjn", "neuropro"): "MJ NeuroPro",
   ("mjn", "gentle_care"): "MJ Gentle Care",
   ("mjn", "nutripower"): "MJ NutriPower",
-  ("nestle", "master"): "Nestle",
+  ("nestle", "master"): "Nestle Master Brand",
   ("nestle", "nan_ha"): "NAN HA",
   ("nestle", "nan_infini_pro"): "NAN Infini Pro",
   ("nestle", "nan_a2"): "NAN A2",
   ("nestle", "nan_legacy"): "NAN HA",
-  ("wyeth", "master"): "Wyeth",
-  ("wyeth", "s26_master"): "Wyeth",
+  ("wyeth", "master"): "Wyeth Master Brand",
+  ("wyeth", "s26_master"): "Wyeth Master Brand",
   ("wyeth", "s26_ultima"): "S26 Ultima",
   ("wyeth", "s26_gold"): "S26 Gold",
   ("wyeth", "ascenda"): "Wyeth Ascenda",
@@ -815,8 +820,9 @@ for row in raw_db_rows:
     q_hard_ev, q_unres_combo, q_form, q_gen = parse_message_layers(quoted)
 
     # 嚴格隔離：keywords 欄位只填 messageBody 自身命中的詞彙，quoted 絕不污染！
-    body_brand_kws = [item["matched_kw"] for item in b_hard_ev]
-    body_kws_only = list(dict.fromkeys(body_brand_kws + b_form + b_gen))
+    body_brand_kws = list(dict.fromkeys([item["matched_kw"] for item in b_hard_ev]))
+    ift_kws = list(dict.fromkeys(b_form + b_gen))
+    body_kws_only = list(dict.fromkeys(body_brand_kws + ift_kws))
 
     # 門禁：正文或引用命中品牌證據或奶粉強特徵
     base_should_ai = bool(b_hard_ev or b_form or q_hard_ev or q_form)
@@ -843,6 +849,10 @@ for row in raw_db_rows:
       "reply": "",
       "brand": "",
       "keywords": ", ".join(body_kws_only),
+      "keyword_Brand": ", ".join(body_brand_kws),
+      "keyword_IFT": ", ".join(ift_kws),
+      "keyword_Other": "",
+      "brand_Dialogue": "",
       "warning": "",
       "Other_Brands": "",
       "should_ai": base_should_ai,
@@ -990,7 +1000,7 @@ def request_poe_api(prompt_text):
 
   headers = {"Authorization": "Bearer " + str(POE_API_KEY), "Content-Type": "application/json"}
   payload = {"model": POE_MODEL, "input": prompt_text}
-  http_resp = requests.post("https://api.poe.com/v1/responses", json=payload, headers=headers, timeout=60)
+  http_resp = http_session.post("https://api.poe.com/v1/responses", json=payload, headers=headers, timeout=60)
   if http_resp.status_code == 200:
     data = http_resp.json()
     return data.get("output_text") or data.get("text", "")
@@ -1086,6 +1096,10 @@ def call_llm_analysis(body_text, quoted_text, context_list, eligible_candidates_
 2. 嚴格指代溯源與 reply_origin 規範：
   - 當本句沒有直接提品牌名，而是在接續、回覆、評論前文所討論的奶粉話題時（例如：「因為有乳鐵蛋白喎」、「我都係咁」），【必須】填入它所承接的那一條前文留言的原話全文（原封不動複製，保留 Emoji 與口語詞）！
   - 若前文完全沒有提及奶粉或品牌話題，或者本句自成獨立話題，reply_origin 必須強制為空字串 ""！
+
+3. 母品牌泛稱與子系列是兩個獨立實體。同一句同時出現兩者，或同時對比多個品牌時，必須各自輸出 opinion，不可吞併。
+
+4. 正文白紙黑字有品牌時，只評價正文自己的品牌；引用只供背景，不可把引用裡的品牌或情緒算到正文上。正文沒有品牌、只是接引用時，品牌可以沿用引用正在討論的品牌，但 P/N/I 必須 100% 依據正文自己的態度，不可把引用的情緒原樣複製過來。
 
 # 立場情感 (sentiment) 評判標準：
 - "P" (正面): 讚賞、推介、成分好、長肉長磅、便便順暢、整體優點大於缺點。
@@ -1213,6 +1227,7 @@ if total_ai_tasks > 0:
       if success:
         with stats_lock:
           stats["ai_actually_processed"] += 1
+        record["isSpam"] = bool(is_spam)
 
         # 💡 原句 100% 還原邏輯
         final_reply = ""
@@ -1236,6 +1251,10 @@ if total_ai_tasks > 0:
             stats["spam_detected"] += 1
           record["brand"] = ""
           record["keywords"] = ""
+          record["keyword_Brand"] = ""
+          record["keyword_IFT"] = ""
+          record["keyword_Other"] = ""
+          record["brand_Dialogue"] = ""
           record["reply"] = ""
           for b in STANDARD_BRANDS:
             record[b] = ""
@@ -1313,7 +1332,7 @@ if total_ai_tasks > 0:
               if "ultima" in raw_b_name.lower(): resolved_col = "S26 Ultima"
               elif "gold" in raw_b_name.lower(): resolved_col = "S26 Gold"
               elif "ascenda" in raw_b_name.lower(): resolved_col = "Wyeth Ascenda"
-              else: resolved_col = "Wyeth"
+              else: resolved_col = "Wyeth Master Brand"
 
             # ── 寫入判定 ──
             # 💡 預設要求當前句自己或 Quoted 有明確品牌證據才打標
@@ -1359,7 +1378,19 @@ if total_ai_tasks > 0:
               elif "I" in s_list:
                 record[p_brand] = "I"
 
-          # 只有 35 個標準項命中時 brand 置為 1
+          # 子品牌已標、正文沒有獨立點名母品牌時，清空母品牌欄，避免把子系列情緒抄到母品牌
+          body_matched_kws = [ev.get("matched_kw") or "" for ev in record["direct_brand_evidence"]]
+          pure_master_kws = ["美素", "愛他美", "雅培", "啟賦", "美贊臣", "雀巢", "惠氏"]
+          for master_b, sub_list in MASTER_BRAND_ROLLUP.items():
+            if any(record.get(sub) for sub in sub_list):
+              independent = any(
+                (pm_kw in (record.get("messageBody") or "")) and len(body_matched_kws) > 1
+                for pm_kw in pure_master_kws
+              )
+              if not independent:
+                record[master_b] = ""
+
+          # 只有標準品牌欄命中時 brand 置為 1
           if standard_brand_hit:
             record["brand"] = "1"
             with stats_lock:
@@ -1379,12 +1410,77 @@ if total_ai_tasks > 0:
               stats["context_attributed_count"] += 1
 
           # 美素負面預警
-          if record.get("Friso") == "N":
+          if record.get(FRISO_MAIN) == "N":
             record["warning"] = "✓"
 
           if other_brands_collected:
             record["Other_Brands"] = "; ".join(other_brands_collected)
   print()
+
+
+
+
+# ==========================================
+# ⏱️ 6.1 話題輪次：brand_Dialogue（時間上限 + 連續無關訊息上限）
+# ==========================================
+print("🔗 正在計算話題輪次 (brand_Dialogue)...")
+for gid, g_records in records_by_group.items():
+  clean_gid_num = re.sub(r"\D", "", str(gid)) or str(gid).split("@")[0]
+  active_session_id = None
+  active_session_brand = None
+  session_root_time = None
+  idle_message_count = 0
+
+  for rec in g_records:
+    if rec.get("isSpam"):
+      rec["brand_Dialogue"] = ""
+      continue
+
+    msg_time = rec.get("time_obj")
+    body_has_brand = (rec.get("brand") == "1") and bool(rec.get("direct_brand_evidence"))
+    has_formula_or_kws = bool(rec.get("keyword_Brand") or rec.get("keyword_IFT"))
+    session_lifespan_mins = 999999
+    if pd.notna(msg_time) and pd.notna(session_root_time):
+      session_lifespan_mins = (msg_time - session_root_time).total_seconds() / 60.0
+
+    if body_has_brand:
+      curr_brand = rec["direct_brand_evidence"][0].get("brand") or ""
+      is_continuation = (
+        active_session_id is not None
+        and session_lifespan_mins <= DIALOGUE_MAX_LIFESPAN_MINUTES
+        and idle_message_count <= DIALOGUE_MAX_IDLE_MESSAGES
+        and active_session_brand == curr_brand
+      )
+      if is_continuation:
+        rec["brand_Dialogue"] = active_session_id
+        idle_message_count = 0
+      else:
+        root_mid = (rec.get("message_id") or "00000000")[-8:]
+        active_session_id = "dial_%s_%s_%s" % (clean_gid_num, curr_brand, root_mid)
+        active_session_brand = curr_brand
+        session_root_time = msg_time
+        idle_message_count = 0
+        rec["brand_Dialogue"] = active_session_id
+        stats["dialogues_created_count"] += 1
+    elif active_session_id:
+      within = (
+        session_lifespan_mins <= DIALOGUE_MAX_LIFESPAN_MINUTES
+        and idle_message_count <= DIALOGUE_MAX_IDLE_MESSAGES
+      )
+      if within and has_formula_or_kws:
+        rec["brand_Dialogue"] = active_session_id
+        idle_message_count = 0
+      else:
+        rec["brand_Dialogue"] = ""
+        idle_message_count += 1
+        if not within:
+          active_session_id = None
+          active_session_brand = None
+          session_root_time = None
+          idle_message_count = 0
+    else:
+      rec["brand_Dialogue"] = ""
+print("✅ 話題輪次計算完成！")
 
 
 # ==========================================
@@ -1452,7 +1548,7 @@ if not final_df.empty:
     sheets_df = full_48_df.copy()
     # 💡 強制統一為 YYYY-MM-DD，Google Sheets 100% 識別為日期，且永不混淆月份與日！
     sheets_df["Date"] = sheets_df["Date"].apply(parse_hk_date_to_iso)
-    for text_col in ["messageBody", "quotedMessage", "reply"]:
+    for text_col in ["messageBody", "quotedMessage", "reply", "brand_Dialogue", "keywords", "keyword_Brand", "keyword_IFT"]:
       sheets_df[text_col] = sheets_df[text_col].apply(escape_sheet_formula)
 
     is_test_mode = bool(
@@ -1503,18 +1599,9 @@ if not final_df.empty:
       db_cols = [
         'message_id', 'instance_id', 'raw_timestamp', 'message_type', 'media_caption', 'sender_lid',
         '"Group"', '"GroupID"', '"Date"', '"Time"', '"userPhone"', '"Internal"',
-        '"quotedMessage"', '"messageBody"', '"reply"', '"brand"', '"keywords"', '"warning"',
-        '"Abbott"', '"Similac HMO"', '"Similac Comfort"', '"Abbott PediaSure"',
-        '"Aptamil"', '"Apta APF"', '"Apta NEO"', '"Apta PHP"',
-        '"C&G"',
-        '"Friso"', '"Friso Gold"', '"Friso Prestige"', '"Friso Bio"', '"Friso Signature"', '"Friso Kids"',
-        '"HiPP"',
-        '"Illuma"', '"Illuma Luxa"', '"Illuma Organic"', '"Illuma A2"', '"Illuma XtraCare"',
-        '"MJ"', '"Enfinitas"', '"MJ A+"', '"MJ NeuroPro"', '"MJ Gentle Care"', '"MJ NutriPower"',
-        '"Nestle"', '"NAN HA"', '"NAN Infini Pro"', '"NAN A2"',
-        '"Wyeth"', '"S26 Ultima"', '"S26 Gold"', '"Wyeth Ascenda"',
-        '"Other_Brands"'
-      ]
+        '"quotedMessage"', '"messageBody"', '"reply"', '"brand"', '"keywords"',
+        '"keyword_Brand"', '"keyword_IFT"', '"keyword_Other"', '"brand_Dialogue"', '"warning"'
+      ] + ['"%s"' % b for b in list(STANDARD_BRANDS) + ["Other_Brands"]]
 
       insert_rows = []
       missing_id_count = 0
@@ -1553,44 +1640,12 @@ if not final_df.empty:
           r.get("reply") or None,
           r.get("brand") or None,
           r.get("keywords") or None,
+          r.get("keyword_Brand") or None,
+          r.get("keyword_IFT") or None,
+          r.get("keyword_Other") or None,
+          r.get("brand_Dialogue") or None,
           r.get("warning") or None,
-          r.get("Abbott") or None,
-          r.get("Similac HMO") or None,
-          r.get("Similac Comfort") or None,
-          r.get("Abbott PediaSure") or None,
-          r.get("Aptamil") or None,
-          r.get("Apta APF") or None,
-          r.get("Apta NEO") or None,
-          r.get("Apta PHP") or None,
-          r.get("C&G") or None,
-          r.get("Friso") or None,
-          r.get("Friso Gold") or None,
-          r.get("Friso Prestige") or None,
-          r.get("Friso Bio") or None,
-          r.get("Friso Signature") or None,
-          r.get("Friso Kids") or None,
-          r.get("HiPP") or None,
-          r.get("Illuma") or None,
-          r.get("Illuma Luxa") or None,
-          r.get("Illuma Organic") or None,
-          r.get("Illuma A2") or None,
-          r.get("Illuma XtraCare") or None,
-          r.get("MJ") or None,
-          r.get("Enfinitas") or None,
-          r.get("MJ A+") or None,
-          r.get("MJ NeuroPro") or None,
-          r.get("MJ Gentle Care") or None,
-          r.get("MJ NutriPower") or None,
-          r.get("Nestle") or None,
-          r.get("NAN HA") or None,
-          r.get("NAN Infini Pro") or None,
-          r.get("NAN A2") or None,
-          r.get("Wyeth") or None,
-          r.get("S26 Ultima") or None,
-          r.get("S26 Gold") or None,
-          r.get("Wyeth Ascenda") or None,
-          r.get("Other_Brands") or None
-        )
+        ) + tuple(r.get(b) or None for b in list(STANDARD_BRANDS) + ["Other_Brands"])
         insert_rows.append(row_tuple)
 
       if missing_id_count:
@@ -1634,6 +1689,7 @@ print_stage_dashboard(
     "🛡️ 硬事實字面保底數": "%d 行 (防 AI 漏標兜底 I)" % stats["hard_fact_guaranteed_count"],
     "🏷️ 明確命中品牌數": "%d 行 (35項目有填入，brand=1)" % stats["brand_identified_count"],
     "🔗 成功關聯前文數": "%d 行 (有效 reply 溯源)" % stats["context_attributed_count"],
+    "🔗 話題輪次新開數": "%d 個 (brand_Dialogue)" % stats["dialogues_created_count"],
     "🍼 泛育兒(無品牌)數": "%d 行" % stats["generic_no_brand"],
     "🗑️ 標記為 Spam 垃圾數": "%d 行" % stats["spam_detected"],
     "🛡️ AI 非法情緒糾錯數": "%d 次" % stats["ai_corrections_triggered"],
