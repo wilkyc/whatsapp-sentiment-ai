@@ -11,7 +11,7 @@
 本專案展示了如何將 **生成式 AI（系統一：Gemini 3.8 Flash；系統二：`gemini-3.1-flash-lite`）** 與 **Google Cloud Platform (GCP) 雲端架構** 實際落地於日常商業營運。全套解決方案包含兩大互補的核心系統：
 
 1. **🤖 WhatsApp 多模態 AI 營運小幫手（即時互動）**：部署於 GCP 雲端的智慧營運助理。團隊非技術同仁只需透過日常 WhatsApp 對話，即可直接以自然語言查詢資料庫、解析多格式文件與圖片，並一鍵產出實體報表或寄送 Email。
-2. **📊 WhatsApp 社群輿情與 NLP 數據管線（批次處理）**：以 GitHub Actions 驅動、手動觸發（workflow_dispatch）的數據管線，抽取指定時段（預設為最近 65 分鐘）的 WhatsApp 群組訊息，完成去重與候選預篩後，交由具上下文理解的 LLM 進行品牌情緒分類，並將 52 欄標準化數據雙軌寫入 Google Sheets 與 Supabase，供儀表板及負面輿情警報使用。
+2. **📊 WhatsApp 社群輿情與 NLP 數據管線（批次處理）**：以 GitHub Actions 的 `workflow_dispatch` 運行的數據管線。定時由外部 cron-job.org 呼叫這個入口，因為 GitHub 內建 schedule 會延遲；workflow 檔本身沒有 schedule。抽取指定時段（預設為最近 65 分鐘）的 WhatsApp 群組訊息，完成去重與候選預篩後，交由具上下文理解的 LLM 進行品牌情緒分類，並將 52 欄標準化數據雙軌寫入 Google Sheets 與 Supabase，供儀表板及負面輿情警報使用。
 
 ---
 
@@ -104,7 +104,7 @@ https://github.com/user-attachments/assets/2c191493-7525-4425-b3ee-d2e9db2a7130
 * **🏷️ 母品牌欄與警示：** 母品牌欄位名稱帶有 `Master Brand`。子品牌有標、且正文沒有另外點名母品牌時，母品牌欄會清空，不會把子系列情緒抄上去；正文同時獨立點名母品牌時才保留母品牌自己的情緒。若訊息明確寫出品牌但 AI 漏標，會以字面匹配保底標記為 `I`。母品牌欄本身為負面時，`warning` 欄才做標記。
 * **🚦 熔斷保護：** 批次開始前先檢測 AI 服務狀態，運行中連續 5 次 LLM 失敗（如 API 額度耗盡）即中止任務，避免寫入半成品數據。若 LLM 回傳 `P`／`N`／`I` 以外的情緒值，會以專項糾錯提示重問一次；仍失敗則在寫入前終止任務，並取消排隊中的 AI 任務。
 * **💾 雙軌寫入：** 固定 52 欄格式（16 個訊息欄位 + 35 個品牌欄位 + `Other_Brands`）。訊息欄含原本的回覆、品牌旗標、合併關鍵詞，以及拆開的 `keyword_Brand`／`keyword_IFT`／`keyword_Other` 和話題編號 `brand_Dialogue`。按半月分表寫入 Google Sheets（`yymm_DailyData_Part1` = 1–15 日，`Part2` = 16 日至月底），內建公式注入防護與 429 限流指數退避重試；同時批次寫入 Supabase `message_full` 表，並附帶基本訊息中繼資料。重複訊息自動略過，運行摘要會列出新入庫與略過的筆數。可用 `write_sheet`／`write_database` 表單選項逐次關閉個別寫入目標。日期一律以「日優先」解析並統一為 `YYYY-MM-DD`，`02/10/2026` 不會被誤讀為 2 月 10 日。另設測試表模式，避免污染正式數據。引用裡的情緒不會直接抄到正文：正文自己有品牌就只評正文；正文沒有品牌時，才可以沿用引用正在討論的品牌，但立場仍看正文。
-* **🔁 增量運行與重跑：** 手動觸發（workflow_dispatch）。未指定日期時處理香港時間最近 65 分鐘的訊息，增量窗口比運行間隔多 5 分鐘以防漏。並以並發鎖排隊，確保兩個任務不會同時寫入。可於 Workflow 表單輸入 `target_date` 重跑：單日（`260928` 或 `2026-09-28`）、跨日範圍（`2026-07-01 to 2026-09-30`、`260701-260930`）或精確時段（`260928 14:00-16:00`，或日期加上獨立的 `time_start`／`time_end` 欄位，例如 `9:00` 自動補成 `09:00:00`）。
+* **🔁 增量運行與重跑：** 定時由外部 cron-job.org 呼叫 `workflow_dispatch`（GitHub 內建 schedule 會延遲，所以 workflow 檔沒有 schedule）。未指定日期時處理香港時間最近 65 分鐘的訊息，增量窗口比運行間隔多 5 分鐘以防漏。並以並發鎖排隊，確保兩個任務不會同時寫入。也可在 Actions 表單用 `target_date` 重跑：單日（`260928` 或 `2026-09-28`）、跨日範圍（`2026-07-01 to 2026-09-30`、`260701-260930`）或精確時段（`260928 14:00-16:00`，或日期加上獨立的 `time_start`／`time_end` 欄位，例如 `9:00` 自動補成 `09:00:00`）。
 * **📱 WhatsApp LID 處理：** 識別 WhatsApp 設備 LID，存入 `sender_lid`，不會當作真實 `userPhone` 寫入；圖片／影片如有說明文字會一併分析。
 * **📊 運行摘要：** 最終日誌摘要包含情緒糾錯次數與本批次各品牌命中分佈。
 * **🎯 指定群組：** 可選填 `target_group_ids`（逗號分隔），只處理指定的 WhatsApp 群組，例如單獨重跑某個群組的歷史數據。
@@ -112,7 +112,7 @@ https://github.com/user-attachments/assets/2c191493-7525-4425-b3ee-d2e9db2a7130
 ### 🧰 配套腳本
 
 * `dashboard.py`：將單日 DailyData 匯總至每月 Google Sheets 儀表板（觸及量、群組分類、品牌情緒統計），需另行以 `--dashboard_id` 執行。母品牌欄位讀的是 `Friso Master Brand`。
-* `universal_sentiment_repair.py` 與 `.github/workflows/sentiment_repair.yml`：手動觸發（workflow_dispatch）。可只重算「引用與正文品牌不一致」的列，或重算指定日期裡有候選命中的列；預設只演練不寫入，表單需輸入 `yes` 才會執行。
+* `universal_sentiment_repair.py` 與 `.github/workflows/sentiment_repair.yml`：以 `workflow_dispatch` 啟動。可只重算「引用與正文品牌不一致」的列，或重算指定日期裡有候選命中的列；預設只演練不寫入，表單需輸入 `yes` 才會執行。
 * `scripts/email_automation/` 與 `docs/MANUS_EMAIL_AUTOMATION.md`：由 Manus AI 排程執行的每日摘要郵件與負面輿情警報。
 
 ### 🚀 安裝與設定 (Setup)
@@ -140,7 +140,7 @@ https://github.com/user-attachments/assets/2c191493-7525-4425-b3ee-d2e9db2a7130
 | `TEST_TARGET_SHEET_URL` | 選填 | 設定後所有輸出只寫入此測試表 |
 | `INTERNAL_PHONES_JSON` | 選填 | 格式如 `{"LabelA": ["9xxxxxxx"], "LabelB": [...]}`，用於 `Internal` 欄位 |
 
-觸發方式：手動觸發（workflow_dispatch），於 **Actions → WhatsApp Data NLP Pipeline → Run workflow** 執行（可選填 `target_date`、`time_start`、`time_end`、`target_group_ids`，以及 `write_sheet`／`write_database` 勾選項）。
+觸發方式：workflow 只有 `workflow_dispatch`，沒有 schedule。定時由外部 cron-job.org 呼叫它，因為 GitHub 內建 schedule 會延遲。也可在 **Actions → WhatsApp Data NLP Pipeline → Run workflow** 重跑（可選填 `target_date`、`time_start`、`time_end`、`target_group_ids`，以及 `write_sheet`／`write_database` 勾選項）。
 
 **Supabase 遷移說明（已有 `message_full` 表時）：** 寫入時會多寫 6 個訊息中繼欄位，且 `message_id` 必須唯一，重複訊息才能自動略過。母品牌欄名現為 `Abbott Master Brand` 這類名稱（不再是 `Friso`、`Abbott` 這種短名）。另外需要四個 TEXT 欄：`keyword_Brand`、`keyword_IFT`、`keyword_Other`、`brand_Dialogue`。
 
