@@ -1,0 +1,87 @@
+name: Sentiment Repair
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_date:
+        description: '日期（留空=不限日期；單日或 2026-07-01 to 2026-07-31）'
+        required: false
+        default: ''
+      repair_mode:
+        description: '修復模式'
+        required: true
+        type: choice
+        options:
+          - QUOTED_MISATTRIBUTION
+          - FULL_RESCORE
+        default: QUOTED_MISATTRIBUTION
+      target_group_ids:
+        description: '指定 Group ID（可選，逗號分隔；留空=全部）'
+        required: false
+        default: ''
+      dry_run:
+        description: '只分析不寫入'
+        required: true
+        type: boolean
+        default: true
+      confirm_run:
+        description: '輸入 yes 才會執行'
+        required: true
+        default: ''
+
+concurrency:
+  group: whatsapp-nlp-pipeline
+  cancel-in-progress: false
+
+jobs:
+  run-repair:
+    if: ${{ github.event.inputs.confirm_run == 'yes' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: 檢出專案代碼 (Checkout)
+        uses: actions/checkout@v4
+
+      - name: 配置 Python 3.11 環境
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: 安裝相依套件
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: 載入 Google 服務帳號金鑰
+        env:
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+        run: |
+          if [ -z "$GCP_SA_KEY" ]; then
+            echo "GCP_SA_KEY is empty"
+            exit 1
+          fi
+          echo "$GCP_SA_KEY" > service_account.json
+
+      - name: 執行歷史語義修復
+        env:
+          POE_API_KEY: ${{ secrets.POE_API_KEY }}
+          SUPABASE_DB_HOST: ${{ secrets.SUPABASE_DB_HOST }}
+          SUPABASE_DB_PORT: ${{ secrets.SUPABASE_DB_PORT }}
+          SUPABASE_DB_NAME: ${{ secrets.SUPABASE_DB_NAME }}
+          SUPABASE_DB_USER: ${{ secrets.SUPABASE_DB_USER }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+          KEYWORDS_SPREADSHEET_ID: ${{ secrets.KEYWORDS_SPREADSHEET_ID }}
+          KEYWORDS_SHEET_URL: ${{ secrets.KEYWORDS_SHEET_URL }}
+          BRAND_SHEET_NAME: ${{ secrets.BRAND_SHEET_NAME }}
+          IFT_SHEET_NAME: ${{ secrets.IFT_SHEET_NAME }}
+          TARGET_DATE: ${{ github.event.inputs.target_date }}
+          REPAIR_MODE: ${{ github.event.inputs.repair_mode }}
+          TARGET_GROUP_IDS: ${{ github.event.inputs.target_group_ids }}
+          DRY_RUN: ${{ github.event.inputs.dry_run }}
+          PYTHONUNBUFFERED: "1"
+        run: python universal_sentiment_repair.py
+
+      - name: 清理敏感憑證檔案
+        if: always()
+        run: rm -f service_account.json
