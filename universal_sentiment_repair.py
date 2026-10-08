@@ -74,7 +74,17 @@ ENV_TARGET_DATE = os.environ.get("TARGET_DATE", "").strip()
 ENV_REPAIR_MODE = os.environ.get("REPAIR_MODE", "QUOTED_MISATTRIBUTION").strip().upper()
 ENV_TARGET_GIDS = os.environ.get("TARGET_GROUP_IDS", "").strip()
 TARGET_GIDS_LIST = [g.strip() for g in ENV_TARGET_GIDS.split(",") if g.strip()]
-IS_DRY_RUN = os.environ.get("DRY_RUN", "false").strip().lower() in ["true", "1", "yes"]
+def repair_should_write(dry_raw, confirm_raw):
+  # 缺省演練。空字串、未設定、true、1、yes 都不寫入。
+  # 只有明確關掉演練（false / 0 / no）且 confirm_run 正好是 yes 才寫入。
+  if dry_raw is None:
+    dry_off = False
+  else:
+    dry_off = str(dry_raw).strip().lower() in ("false", "0", "no")
+  confirm_yes = str(confirm_raw or "").strip() == "yes"
+  return bool(dry_off and confirm_yes)
+
+IS_DRY_RUN = not repair_should_write(os.environ.get("DRY_RUN"), os.environ.get("CONFIRM_RUN"))
 
 COMMIT_EVERY_N_ROWS = 1000
 MAX_CONSECUTIVE_FAILURES = 5

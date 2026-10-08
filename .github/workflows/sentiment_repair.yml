@@ -79,6 +79,7 @@ jobs:
           REPAIR_MODE: ${{ github.event.inputs.repair_mode }}
           TARGET_GROUP_IDS: ${{ github.event.inputs.target_group_ids }}
           DRY_RUN: ${{ github.event.inputs.dry_run }}
+          CONFIRM_RUN: ${{ github.event.inputs.confirm_run }}
           PYTHONUNBUFFERED: "1"
         run: python universal_sentiment_repair.py
 

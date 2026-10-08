@@ -10,7 +10,7 @@ import time
 from config import (
   PRODUCT_SHORT_BRANDS as STANDARD_BRANDS,
   MASTER_BRAND_ROLLUP,
-  FINAL_HEADERS_48,
+  FINAL_HEADERS_52,
   ENABLE_CONTEXTUAL_ALIAS,
   CONTEXT_HISTORY_MAX_MINUTES,
   DIALOGUE_MAX_LIFESPAN_MINUTES,
@@ -1484,9 +1484,9 @@ print("✅ 話題輪次計算完成！")
 
 
 # ==========================================
-# 💾 7. 雙軌寫入：Google Sheets (48欄) + Supabase (48欄)
+# 💾 7. 雙軌寫入：Google Sheets (52欄) + Supabase (52欄)
 # ==========================================
-print("\n💾 正在整理資料並準備執行雙軌寫入 (48 欄位標準格式)...")
+print("\n💾 正在整理資料並準備執行雙軌寫入 (52 欄位標準格式)...")
 final_df = pd.DataFrame(cleaned_records)
 
 def parse_hk_date_to_iso(date_str):
@@ -1536,16 +1536,16 @@ def append_to_google_sheet_safe(worksheet, rows_data):
   worksheet.append_rows(rows_data, value_input_option="USER_ENTERED")
 
 if not final_df.empty:
-  for col in FINAL_HEADERS_48:
+  for col in FINAL_HEADERS_52:
     if col not in final_df.columns:
       final_df[col] = ""
-  full_48_df = final_df[FINAL_HEADERS_48].copy()
+  full_52_df = final_df[FINAL_HEADERS_52].copy()
 
   # ── 7.1 寫入 Google Sheets ──
   if not ENABLE_WRITE_SHEET:
     print("\n🛑 [Google Sheets] WRITE_SHEET=false，已略過寫入。")
   else:
-    sheets_df = full_48_df.copy()
+    sheets_df = full_52_df.copy()
     # 💡 強制統一為 YYYY-MM-DD，Google Sheets 100% 識別為日期，且永不混淆月份與日！
     sheets_df["Date"] = sheets_df["Date"].apply(parse_hk_date_to_iso)
     for text_col in ["messageBody", "quotedMessage", "reply", "brand_Dialogue", "keywords", "keyword_Brand", "keyword_IFT"]:
@@ -1564,7 +1564,7 @@ if not final_df.empty:
         sh = gc.open_by_url(TEST_TARGET_SHEET_URL)
         worksheet = sh.worksheet(TEST_WORKSHEET_TAB)
         append_to_google_sheet_safe(worksheet, sheets_df.values.tolist())
-        print("✅ [測試表] 成功寫入 %d 筆 48 欄測試數據到 【%s】！" % (len(sheets_df), TEST_WORKSHEET_TAB))
+        print("✅ [測試表] 成功寫入 %d 筆 52 欄測試數據到 【%s】！" % (len(sheets_df), TEST_WORKSHEET_TAB))
       except Exception as e:
         print("❌ [測試表] 寫入測試表格失敗:", str(e))
     else:
@@ -1586,7 +1586,7 @@ if not final_df.empty:
         except Exception as e:
           print("❌ [Google Sheets] 寫入【" + sheet_name + "】失敗:", str(e))
 
-  # ── 7.2 寫入 Supabase 全量表 (48 欄 + 訊息中繼欄位) ──
+  # ── 7.2 寫入 Supabase 全量表 (52 欄 + 訊息中繼欄位) ──
   supabase_host = SUPABASE_DB_CONFIG.get("host", "").strip()
   supabase_pw = SUPABASE_DB_CONFIG.get("password", "").strip()
 
