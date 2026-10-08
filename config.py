@@ -59,14 +59,14 @@ MASTER_BRAND_ROLLUP = {
 }
 
 # 📝 全量欄位：原有訊息欄 + 關鍵詞拆欄 + 話題輪次，再接標準品牌欄與 Other_Brands
-FINAL_HEADERS_48 = (
+FINAL_HEADERS_52 = (
   ["Group", "GroupID", "Date", "Time", "userPhone", "Internal",
    "quotedMessage", "messageBody", "reply", "brand", "keywords",
    "keyword_Brand", "keyword_IFT", "keyword_Other", "brand_Dialogue", "warning"]
   + PRODUCT_SHORT_BRANDS
   + ["Other_Brands"]
 )
-FINAL_HEADERS_31 = FINAL_HEADERS_48  # 向下相容歷史別名
+FINAL_HEADERS_31 = FINAL_HEADERS_52  # 向下相容歷史別名
 
 # 話題輪次：自發起起的最長時間，以及連續無關訊息的上限
 DIALOGUE_MAX_LIFESPAN_MINUTES = 30
